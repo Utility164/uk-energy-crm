@@ -97,12 +97,27 @@ function useFirestore() {
 
         const u1 = onSnapshot(
           query(collection(db,"customers"), orderBy("createdAt","desc")),
-          snap => setCustomers(snap.docs.map(d=>({id:d.id,...d.data()}))),
+          async snap => {
+            if (snap.empty) {
+              const { doc:d2, setDoc:s2 } = window._fbLib;
+              await Promise.all(SEED_CUSTOMERS.map(c => s2(d2(db,"customers",c.id), c)));
+              return;
+            }
+            setCustomers(snap.docs.map(d=>({id:d.id,...d.data()})));
+          },
           err  => setFbError(err.message)
         );
         const u2 = onSnapshot(
           collection(db,"users"),
-          snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
+          async snap => {
+            if (snap.empty) {
+              // First time setup: seed default manager + agent accounts into Firestore
+              const { doc:d2, setDoc:s2 } = window._fbLib;
+              await Promise.all(INITIAL_USERS.map(u => s2(d2(db,"users",u.id), u)));
+              return; // onSnapshot will fire again automatically once seeded
+            }
+            setUsers(snap.docs.map(d=>({id:d.id,...d.data()})));
+          },
           err  => setFbError(err.message)
         );
         unsubsRef.current = [u1,u2];

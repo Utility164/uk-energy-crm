@@ -871,6 +871,168 @@ function CustomerList({customers,onSelect,onAdd,agentFilter}){
 }
 
 // ═══════════════════════════════════════════════════════════
+//  AI SMART IMPORT
+// ═══════════════════════════════════════════════════════════
+function AIImport({currentUser,agents,isManager,onSave}){
+  const [rawText,setRawText]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+
+  const handleExtract=async()=>{
+    if(!rawText.trim()){setError("Please paste some data first.");return;}
+    setLoading(true);setError("");setResult(null);
+    try{
+      const prompt=`You are a UK energy contract data extractor. Extract all available information from the following text and return ONLY a valid JSON object with these exact keys (use empty string "" for any missing fields):
+
+businessName, contactPersonName, telephoneNo, mobileNo, landlineNo, supplyAddress, postcode, commercialRes, companyRegNo,
+elec1Supplier, elec1SupplyNo, elec1OfferRate, elec1SCharge, elec1Day, elec1Night, elec1EveWend, elec1ContractTerm, elec1NameOnBill, elec1ContractEnd, elec1MeterSerial, elec1AnnualConsumption,
+elec2Supplier, elec2SupplyNo, elec2OfferRate, elec2SCharge, elec2Day, elec2Night, elec2EveWend, elec2ContractTerm, elec2NameOnBill, elec2ContractEnd, elec2MeterSerial, elec2AnnualConsumption,
+gas1Supplier, gas1OfferedSCharge, gas1UnitRate, gas1AQ, gas1MPRN, gas1ContractEnd, gas1ContractStart, gas1ContractTerm, gas1SiteNoBG, gas1NameOnBill, gas1MeterRead, gas1MeterSerial,
+gas2Supplier, gas2OfferedSCharge, gas2UnitRate, gas2AQ, gas2MPRN, gas2ContractEnd, gas2ContractStart, gas2ContractTerm, gas2SiteNoBG, gas2NameOnBill, gas2MeterRead, gas2MeterSerial,
+bankName, accountTitle, branchAddress, sortCode, accountNo, billPaymentMethod, landlordName, directorsHomeAddress, directorsDOB, nameOfNewCustomer, remarks.
+
+For dates use YYYY-MM-DD format. For rates/prices extract numbers only (no units). Return ONLY the JSON, no explanation.
+
+Data to extract:
+${rawText}`;
+
+      const response=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",
+          max_tokens:1000,
+          messages:[{role:"user",content:prompt}]
+        })
+      });
+      const data=await response.json();
+      const text=data.content.map(i=>i.text||"").join("");
+      const clean=text.replace(/```json|```/g,"").trim();
+      const parsed=JSON.parse(clean);
+      setResult(parsed);
+    }catch(e){
+      setError("Could not extract data. Please check the text and try again.");
+    }
+    setLoading(false);
+  };
+
+  const handleSave=async()=>{
+    if(!result)return;
+    setSaving(true);
+    const agentId=currentUser.role==="agent"?currentUser.id:(agents[0]?.id||currentUser.id);
+    const agentName=currentUser.role==="agent"?currentUser.name:(agents[0]?.name||currentUser.name);
+    await onSave({
+      ...result,
+      id:uid("CUS"),
+      agentId,agentName,
+      date:today(),
+      renewalStatus:"Not Due",
+      commercialRes:result.commercialRes||"Commercial",
+      billPaymentMethod:result.billPaymentMethod||"Direct Debit",
+      createdAt:today(),
+    });
+    setSaving(false);setSaved(true);
+    setTimeout(()=>{setSaved(false);setResult(null);setRawText("");},2000);
+  };
+
+  const fields=[
+    {label:"Business Name",k:"businessName"},
+    {label:"Contact Person",k:"contactPersonName"},
+    {label:"Telephone No",k:"telephoneNo"},
+    {label:"Mobile No",k:"mobileNo"},
+    {label:"Address",k:"supplyAddress"},
+    {label:"Postcode",k:"postcode"},
+    {label:"Company Reg",k:"companyRegNo"},
+    {label:"Elec Supplier",k:"elec1Supplier"},
+    {label:"MPAN",k:"elec1SupplyNo"},
+    {label:"Elec Offer Rate",k:"elec1OfferRate"},
+    {label:"Elec Standing Charge",k:"elec1SCharge"},
+    {label:"Elec Contract End",k:"elec1ContractEnd"},
+    {label:"Elec Annual Usage",k:"elec1AnnualConsumption"},
+    {label:"Elec Meter Serial",k:"elec1MeterSerial"},
+    {label:"Gas Supplier",k:"gas1Supplier"},
+    {label:"MPRN",k:"gas1MPRN"},
+    {label:"Gas Unit Rate",k:"gas1UnitRate"},
+    {label:"Gas Standing Charge",k:"gas1OfferedSCharge"},
+    {label:"Gas AQ",k:"gas1AQ"},
+    {label:"Gas Contract End",k:"gas1ContractEnd"},
+    {label:"Gas Meter Serial",k:"gas1MeterSerial"},
+    {label:"Bank Name",k:"bankName"},
+    {label:"Account Title",k:"accountTitle"},
+    {label:"Sort Code",k:"sortCode"},
+    {label:"Account No",k:"accountNo"},
+    {label:"Remarks",k:"remarks"},
+  ];
+
+  return(
+    <div style={{fontFamily:"Inter,system-ui,sans-serif"}}>
+      <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🤖 AI Smart Import</div>
+      <div style={{color:S.muted,fontSize:13,marginBottom:24}}>Paste any text from your paper sheet, spreadsheet or notes — AI will extract and fill all fields automatically.</div>
+
+      {/* Input area */}
+      <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
+        <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:10}}>📋 Paste Your Data Here</div>
+        <div style={{color:S.muted,fontSize:12,marginBottom:12}}>You can paste anything — a copied spreadsheet row, typed notes, or any format. The AI will figure it out.</div>
+        <textarea
+          value={rawText}
+          onChange={e=>{setRawText(e.target.value);setError("");}}
+          rows={10}
+          placeholder={`Example — paste anything like this:\n\nBusiness: Hartley Builders Ltd\nContact: James Hartley\nTel: 0161 234 5678 / Mobile: 07712 345678\nAddress: 14 Birchwood Close, Manchester M23 4PQ\nSupplier: British Gas | Fuel: Dual Fuel\nMPAN: S1200000123456 | MPRN: 7812345678\nElec rate: 24.5p/kWh | Standing: 45p/day\nGas rate: 6.8p/kWh | Standing: 28p/day\nContract end: 15/08/2025\nBank: HSBC | Sort: 40-12-34 | Acc: 12345678`}
+          style={{width:"100%",boxSizing:"border-box",background:S.cardLL,border:`1px solid ${S.border}`,borderRadius:10,padding:"12px 14px",color:S.white,fontSize:13,resize:"vertical",fontFamily:"monospace",outline:"none"}}
+        />
+        {error&&<div style={{color:S.danger,fontSize:13,marginTop:10}}>⚠️ {error}</div>}
+        <div style={{marginTop:14,display:"flex",gap:10}}>
+          <Btn color={S.teal} onClick={handleExtract} disabled={loading}>
+            {loading?"🤖 Extracting data…":"🤖 Extract & Fill Fields"}
+          </Btn>
+          {rawText&&<Btn color={S.slate} outline onClick={()=>{setRawText("");setResult(null);setError("");}}>Clear</Btn>}
+        </div>
+      </div>
+
+      {/* Extracted result preview */}
+      {result&&(
+        <div style={{background:S.card,borderRadius:14,padding:24,border:`1px solid ${S.green}40`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div>
+              <div style={{color:S.green,fontWeight:700,fontSize:15}}>✅ Data Extracted Successfully</div>
+              <div style={{color:S.muted,fontSize:12,marginTop:2}}>Review the fields below — edit anything before saving</div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn color={S.green} onClick={handleSave} disabled={saving||saved}>
+                {saved?"✅ Saved!":saving?"⏳ Saving…":"💾 Save to CRM"}
+              </Btn>
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:10}}>
+            {fields.map(f=>(
+              <div key={f.k} style={{background:S.cardL,borderRadius:8,padding:"10px 12px"}}>
+                <div style={{color:S.muted,fontSize:10,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{f.label}</div>
+                <input
+                  value={result[f.k]||""}
+                  onChange={e=>setResult(p=>({...p,[f.k]:e.target.value}))}
+                  style={{width:"100%",boxSizing:"border-box",background:"transparent",border:"none",borderBottom:`1px solid ${result[f.k]?S.teal:S.border}`,padding:"2px 0",color:result[f.k]?S.teal:S.muted,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div style={{marginTop:18,display:"flex",gap:10}}>
+            <Btn color={S.green} onClick={handleSave} disabled={saving||saved}>
+              {saved?"✅ Saved to CRM!":saving?"⏳ Saving…":"💾 Save to CRM"}
+            </Btn>
+            <Btn color={S.slate} outline onClick={()=>{setResult(null);setRawText("");}}>Start Over</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  ROOT APP
 // ═══════════════════════════════════════════════════════════
 export default function App(){
@@ -920,6 +1082,7 @@ export default function App(){
   const navItems=[
     {id:"dashboard",label:"📊 Dashboard"},
     {id:"contracts",label:"📋 Contracts"},
+    {id:"import",label:"🤖 AI Import"},
     ...(isManager?[{id:"agents",label:"👥 Agents"},{id:"analytics",label:"📈 Analytics"}]:[]),
   ];
 
@@ -1025,6 +1188,8 @@ export default function App(){
         {(view==="add"||view==="edit")&&<CustomerForm initial={view==="edit"?selected:null} agentId={currentUser.id} agentName={currentUser.name} isManager={isManager} agents={agents} onSave={handleSaveCustomer} onCancel={()=>setView(selected?"detail":"contracts")}/>}
 
         {view==="detail"&&selected&&<CustomerDetail customer={customers.find(x=>x.id===selected.id)||selected} isManager={isManager} onEdit={()=>setView("edit")} onDelete={()=>handleDeleteCustomer(selected.id)} onStatusChange={handleStatusChange} onBack={()=>setView("contracts")}/>}
+
+        {view==="import"&&<AIImport currentUser={currentUser} agents={agents} isManager={isManager} onSave={async(c)=>{await saveCustomer(c);setView("contracts");}}/>}
 
         {view==="agents"&&isManager&&<AgentManagement users={users} saveUser={saveUser} delUser={delUser}/>}
 

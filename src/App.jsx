@@ -544,11 +544,22 @@ function CustomerForm({initial,agentId,agentName,onSave,onCancel,isManager,agent
       </Sec>
 
       <Sec title="Remarks & Verification" color={S.amber} icon="📝">
-        <label style={{display:"block",marginBottom:12}}>
-          <div style={{color:S.muted,fontSize:11,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Remarks</div>
-          <textarea value={f.remarks||""} onChange={e=>set("remarks",e.target.value)} rows={3}
-            style={{width:"100%",boxSizing:"border-box",background:S.cardLL,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 12px",color:S.white,fontSize:13,resize:"vertical",fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}/>
-        </label>
+        <div style={{marginBottom:14}}>
+          <div style={{color:S.muted,fontSize:11,marginBottom:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Remarks (1–10)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[1,2,3,4,5,6,7,8,9,10].map(n=>(
+              <div key={n} style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${S.amber},${S.amberD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:S.navy,flexShrink:0}}>{n}</div>
+                <input
+                  value={f[`remark${n}`]||""}
+                  onChange={e=>set(`remark${n}`,e.target.value)}
+                  placeholder={`Remark ${n}…`}
+                  style={{flex:1,background:S.cardLL,border:`1px solid ${f[`remark${n}`]?S.amber+"60":S.border}`,borderRadius:8,padding:"8px 12px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
         <G cols={3}>
           <Sel label="Renewal Status"       k="renewalStatus"    f={f} set={set} options={["Not Due","Pending","Called","Renewed","Declined"]}/>
           <Inp label="Checked By (Manager)" k="checkedByManager" f={f} set={set}/>
@@ -797,9 +808,14 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
             <DI label="Date of Birth"  value={fmtDate(c.directorsDOB)}/>
             <DI label="New Customer"   value={c.nameOfNewCustomer}/>
           </DBox>
-          {c.remarks&&(
+          {[1,2,3,4,5,6,7,8,9,10].some(n=>c[`remark${n}`])&&(
             <DBox title="📝 Remarks" color={S.amber}>
-              <div style={{color:S.off,fontSize:13,lineHeight:1.6}}>{c.remarks}</div>
+              {[1,2,3,4,5,6,7,8,9,10].filter(n=>c[`remark${n}`]).map(n=>(
+                <div key={n} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <div style={{width:22,height:22,borderRadius:"50%",background:`linear-gradient(135deg,${S.amber},${S.amberD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:S.navy,flexShrink:0,marginTop:1}}>{n}</div>
+                  <div style={{color:S.off,fontSize:13,lineHeight:1.6}}>{c[`remark${n}`]}</div>
+                </div>
+              ))}
               {(c.checkedByManager||c.checkedByEditor)&&<>
                 <DI label="Checked (Manager)" value={c.checkedByManager}/>
                 <DI label="Checked (Editor)"  value={c.checkedByEditor}/>
@@ -823,27 +839,59 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
 //  CUSTOMER LIST
 // ═══════════════════════════════════════════════════════════
 function CustomerList({customers,onSelect,onAdd,agentFilter}){
-  const [search,setSearch]=useState("");
-  const [filterStatus,setFilterStatus]=useState("All");
+  const [filterBusiness,  setFilterBusiness]  = useState("");
+  const [filterContact,   setFilterContact]   = useState("");
+  const [filterTel,       setFilterTel]       = useState("");
+  const [filterStatus,    setFilterStatus]    = useState("All");
+
   const filtered=customers
     .filter(c=>agentFilter?c.agentId===agentFilter:true)
     .filter(c=>{
-      const q=search.toLowerCase();
-      const ms=!q||`${c.businessName} ${c.contactPersonName} ${c.id} ${c.mobileNo} ${c.telephoneNo} ${c.landlineNo} ${c.postcode} ${c.supplyAddress}`.toLowerCase().includes(q);
-      return ms&&(filterStatus==="All"||c.renewalStatus===filterStatus);
+      const mb=!filterBusiness  || c.businessName?.toLowerCase().includes(filterBusiness.toLowerCase());
+      const mc=!filterContact   || c.contactPersonName?.toLowerCase().includes(filterContact.toLowerCase());
+      const mt=!filterTel       || [c.telephoneNo,c.mobileNo,c.landlineNo].some(v=>v?.includes(filterTel));
+      const ms=filterStatus==="All"||c.renewalStatus===filterStatus;
+      return mb&&mc&&mt&&ms;
     });
+
+  const inpStyle={background:S.card,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 12px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none",width:"100%",boxSizing:"border-box"};
+
+  const hasFilters=filterBusiness||filterContact||filterTel||filterStatus!=="All";
+
   return(
     <div>
-      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-        <input placeholder="🔍 Search business, name, phone, postcode…" value={search} onChange={e=>setSearch(e.target.value)}
-          style={{flex:1,minWidth:200,background:S.card,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 14px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}/>
-        <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
-          style={{background:S.card,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 14px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}>
-          {["All","Not Due","Pending","Called","Renewed","Declined"].map(s=><option key={s}>{s}</option>)}
-        </select>
+      {/* Filter panel */}
+      <div style={{background:S.card,borderRadius:14,padding:18,marginBottom:16,border:`1px solid ${S.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{color:S.teal,fontWeight:700,fontSize:13}}>🔍 Search & Filter</div>
+          {hasFilters&&<button onClick={()=>{setFilterBusiness("");setFilterContact("");setFilterTel("");setFilterStatus("All");}} style={{background:"transparent",border:"none",color:S.danger,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>✕ Clear All</button>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+          <div>
+            <div style={{color:S.muted,fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>🏢 Business Name</div>
+            <input value={filterBusiness} onChange={e=>setFilterBusiness(e.target.value)} placeholder="e.g. Hartley Builders" style={inpStyle}/>
+          </div>
+          <div>
+            <div style={{color:S.muted,fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>👤 Customer Name</div>
+            <input value={filterContact} onChange={e=>setFilterContact(e.target.value)} placeholder="e.g. James Hartley" style={inpStyle}/>
+          </div>
+          <div>
+            <div style={{color:S.muted,fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>📞 Telephone Number</div>
+            <input value={filterTel} onChange={e=>setFilterTel(e.target.value)} placeholder="e.g. 07712 345678" style={inpStyle}/>
+          </div>
+          <div>
+            <div style={{color:S.muted,fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>📊 Renewal Status</div>
+            <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={inpStyle}>
+              {["All","Not Due","Pending","Called","Renewed","Declined"].map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{color:S.muted,fontSize:12}}>{filtered.length} contract{filtered.length!==1?"s":""}{IS_CONFIGURED&&<span style={{color:S.green}}> · ☁️ Firebase live</span>}</div>
         {onAdd&&<Btn color={S.teal} onClick={onAdd}>+ New Contract</Btn>}
       </div>
-      <div style={{color:S.muted,fontSize:12,marginBottom:12}}>{filtered.length} contract{filtered.length!==1?"s":""}{IS_CONFIGURED&&<span style={{color:S.green}}> · ☁️ Firebase live</span>}</div>
       {filtered.map(c=>{
         const d=nearExpiry(c);
         const ne=d!==null&&d<=180&&c.renewalStatus!=="Renewed";
@@ -871,53 +919,142 @@ function CustomerList({customers,onSelect,onAdd,agentFilter}){
 }
 
 // ═══════════════════════════════════════════════════════════
-//  AI SMART IMPORT
+//  AI SMART IMPORT  — Image upload + Claude Vision
 // ═══════════════════════════════════════════════════════════
 function AIImport({currentUser,agents,isManager,onSave}){
+  const [mode,setMode]=useState("image"); // "image" | "text"
   const [rawText,setRawText]=useState("");
+  const [imageFile,setImageFile]=useState(null);
+  const [imagePreview,setImagePreview]=useState(null);
   const [loading,setLoading]=useState(false);
   const [result,setResult]=useState(null);
   const [error,setError]=useState("");
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
+  const fileRef=useRef(null);
 
-  const handleExtract=async()=>{
-    if(!rawText.trim()){setError("Please paste some data first.");return;}
-    setLoading(true);setError("");setResult(null);
-    try{
-      const prompt=`You are a UK energy contract data extractor. Extract all available information from the following text and return ONLY a valid JSON object with these exact keys (use empty string "" for any missing fields):
+  const handleImageChange=e=>{
+    const file=e.target.files[0];
+    if(!file)return;
+    setImageFile(file);
+    setError("");setResult(null);
+    const reader=new FileReader();
+    reader.onload=ev=>setImagePreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
 
+  const toBase64=file=>new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result.split(",")[1]);
+    r.onerror=()=>rej(new Error("Read failed"));
+    r.readAsDataURL(file);
+  });
+
+  const PROMPT=`You are a UK energy contract data extractor. Extract ALL visible information from this contact sheet image and return ONLY a valid JSON object with these exact keys (use empty string "" for any missing fields):
 businessName, contactPersonName, telephoneNo, mobileNo, landlineNo, supplyAddress, postcode, commercialRes, companyRegNo,
 elec1Supplier, elec1SupplyNo, elec1OfferRate, elec1SCharge, elec1Day, elec1Night, elec1EveWend, elec1ContractTerm, elec1NameOnBill, elec1ContractEnd, elec1MeterSerial, elec1AnnualConsumption,
 elec2Supplier, elec2SupplyNo, elec2OfferRate, elec2SCharge, elec2Day, elec2Night, elec2EveWend, elec2ContractTerm, elec2NameOnBill, elec2ContractEnd, elec2MeterSerial, elec2AnnualConsumption,
 gas1Supplier, gas1OfferedSCharge, gas1UnitRate, gas1AQ, gas1MPRN, gas1ContractEnd, gas1ContractStart, gas1ContractTerm, gas1SiteNoBG, gas1NameOnBill, gas1MeterRead, gas1MeterSerial,
 gas2Supplier, gas2OfferedSCharge, gas2UnitRate, gas2AQ, gas2MPRN, gas2ContractEnd, gas2ContractStart, gas2ContractTerm, gas2SiteNoBG, gas2NameOnBill, gas2MeterRead, gas2MeterSerial,
 bankName, accountTitle, branchAddress, sortCode, accountNo, billPaymentMethod, landlordName, directorsHomeAddress, directorsDOB, nameOfNewCustomer, remarks.
+Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Return ONLY the JSON object, no explanation, no markdown.`;
 
-For dates use YYYY-MM-DD format. For rates/prices extract numbers only (no units). Return ONLY the JSON, no explanation.
-
-Data to extract:
-${rawText}`;
-
+  const handleExtractImage=async()=>{
+    if(!imageFile){setError("Please upload an image first.");return;}
+    setLoading(true);setError("");setResult(null);
+    try{
+      const base64=await toBase64(imageFile);
+      const mediaType=imageFile.type||"image/jpeg";
       const response=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           model:"claude-sonnet-4-6",
-          max_tokens:1000,
-          messages:[{role:"user",content:prompt}]
+          max_tokens:1500,
+          messages:[{
+            role:"user",
+            content:[
+              {type:"image",source:{type:"base64",media_type:mediaType,data:base64}},
+              {type:"text",text:PROMPT}
+            ]
+          }]
         })
       });
       const data=await response.json();
+      if(data.error){throw new Error(data.error.message);}
       const text=data.content.map(i=>i.text||"").join("");
       const clean=text.replace(/```json|```/g,"").trim();
       const parsed=JSON.parse(clean);
       setResult(parsed);
     }catch(e){
-      setError("Could not extract data. Please check the text and try again.");
+      setError("Could not read the image. Try a clearer photo or use the text paste option below.");
     }
     setLoading(false);
   };
+
+  const handleExtractText=()=>{
+    if(!rawText.trim()){setError("Please paste some data first.");return;}
+    setLoading(true);setError("");setResult(null);
+    try{
+      const t=rawText;
+      const g=(patterns)=>{for(const p of patterns){const m=t.match(p);if(m&&m[1]&&m[1].trim())return m[1].trim();}return "";};
+      const gDate=(patterns)=>{const raw=g(patterns);if(!raw)return "";const m=raw.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);if(m){const day=m[1].padStart(2,"0");const mon=m[2].padStart(2,"0");const yr=m[3].length===2?"20"+m[3]:m[3];return `${yr}-${mon}-${day}`;}return raw;};
+      const gNum=(patterns)=>{const raw=g(patterns);return raw.replace(/[^\d.]/g,"");};
+      const suppliers=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
+      const gSupplier=(hint)=>{const area=hint?t.slice(t.toLowerCase().indexOf(hint.toLowerCase())):t;for(const s of suppliers){if(area.toLowerCase().includes(s.toLowerCase()))return s;}return "";};
+      setResult({
+        businessName:g([/business[\s\w]*?:\s*(.+)/i,/company[\s\w]*?:\s*(.+)/i]),
+        contactPersonName:g([/contact[\s\w]*?:\s*(.+)/i,/name[\s\w]*?:\s*(.+)/i]),
+        telephoneNo:g([/tel(?:ephone)?[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
+        mobileNo:g([/mob(?:ile)?[\s\w]*?:\s*(07[\d\s]{9,})/i,/(07\d{3}[\s\-]?\d{6})/]),
+        landlineNo:g([/landline[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
+        supplyAddress:g([/address[\s\w]*?:\s*(.+)/i,/supply address[\s\w]*?:\s*(.+)/i]),
+        postcode:g([/postcode[\s\w]*?:\s*([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})/i,/([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b/i]),
+        commercialRes:t.toLowerCase().includes("resident")?"Residential":"Commercial",
+        companyRegNo:g([/reg(?:istration)?[\s\w]*?(?:no|number)?[\s:]*([A-Z0-9]{6,10})/i]),
+        elec1Supplier:gSupplier("mpan")||gSupplier("electric")||"",
+        elec1SupplyNo:g([/mpan[\s\w]*?:\s*([\d\s]{10,})/i]),
+        elec1OfferRate:gNum([/elec[\w\s]*?rate[\s:]*(\d+\.?\d*)/i,/unit\s*rate[\s:]*(\d+\.?\d*)/i]),
+        elec1SCharge:gNum([/standing[\w\s]*?charge[\s:]*(\d+\.?\d*)/i]),
+        elec1Day:gNum([/day[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+        elec1Night:gNum([/night[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+        elec1EveWend:gNum([/eve[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+        elec1ContractTerm:g([/contract\s*term[\s:]*(\d+\s*year)/i]),
+        elec1NameOnBill:g([/name\s*on\s*(?:elec)?\s*bill[\s:]*(.+)/i]),
+        elec1ContractEnd:gDate([/contract\s*end[\s\w]*?:\s*([\d\/\-\.]+)/i,/end\s*date[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+        elec1MeterSerial:g([/meter[\w\s]*?serial[\s:]*([A-Z0-9]+)/i,/msn[\s:]*([A-Z0-9]+)/i]),
+        elec1AnnualConsumption:gNum([/annual[\w\s]*?(?:elec|consumption)[\s:]*(\d+)/i]),
+        elec2Supplier:"",elec2SupplyNo:"",elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
+        gas1Supplier:gSupplier("mprn")||gSupplier("gas")||"",
+        gas1MPRN:g([/mprn[\s\w]*?:\s*([\d\s]{10,})/i]),
+        gas1UnitRate:gNum([/gas[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+        gas1OfferedSCharge:gNum([/gas[\w\s]*?standing[\s:]*(\d+\.?\d*)/i]),
+        gas1AQ:gNum([/(?:aq|annual\s*quantity)[\s:]*(\d+)/i]),
+        gas1ContractEnd:gDate([/gas[\w\s]*?end[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+        gas1ContractStart:gDate([/gas[\w\s]*?start[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+        gas1ContractTerm:g([/gas[\w\s]*?term[\s:]*(\d+\s*year)/i]),
+        gas1SiteNoBG:g([/site\s*no[\s:]*([A-Z0-9]+)/i]),
+        gas1NameOnBill:g([/name\s*on\s*gas\s*bill[\s:]*(.+)/i]),
+        gas1MeterRead:gNum([/meter\s*read(?:ing)?[\s:]*(\d+)/i]),
+        gas1MeterSerial:g([/gas[\w\s]*?serial[\s:]*([A-Z0-9]+)/i]),
+        gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
+        bankName:g([/bank[\s\w]*?(?:name)?[\s:]+([A-Za-z\s]+?)(?:\n|sort|$)/i]),
+        accountTitle:g([/account[\s\w]*?(?:title|name)[\s:]*(.+)/i]),
+        branchAddress:g([/branch[\s\w]*?address[\s:]*(.+)/i]),
+        sortCode:g([/sort[\s\w]*?code[\s:]*(\d{2}[\s\-]\d{2}[\s\-]\d{2})/i,/(\d{2}[\-]\d{2}[\-]\d{2})/]),
+        accountNo:g([/account[\s\w]*?(?:no|number)[\s:]*(\d{6,10})/i]),
+        billPaymentMethod:t.toLowerCase().includes("prepay")?"Cash / Cheque":"Direct Debit",
+        landlordName:g([/landlord[\s\w]*?(?:name)?[\s:]*(.+)/i]),
+        directorsHomeAddress:g([/director[\s\w]*?address[\s:]*(.+)/i]),
+        directorsDOB:gDate([/(?:dob|date\s*of\s*birth)[\s:]*?([\d\/\-\.]+)/i]),
+        nameOfNewCustomer:g([/new\s*customer[\s:]*(.+)/i]),
+        remarks:g([/remarks?[\s:]*(.+)/i,/notes?[\s:]*(.+)/i]),
+      });
+    }catch(e){setError("Could not extract data. Please check the text and try again.");}
+    setLoading(false);
+  };
+
+
 
   const handleSave=async()=>{
     if(!result)return;
@@ -970,27 +1107,73 @@ ${rawText}`;
   return(
     <div style={{fontFamily:"Inter,system-ui,sans-serif"}}>
       <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🤖 AI Smart Import</div>
-      <div style={{color:S.muted,fontSize:13,marginBottom:24}}>Paste any text from your paper sheet, spreadsheet or notes — AI will extract and fill all fields automatically.</div>
+      <div style={{color:S.muted,fontSize:13,marginBottom:20}}>Upload a photo of your paper sheet OR paste text — AI reads it and fills all fields automatically.</div>
 
-      {/* Input area */}
-      <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
-        <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:10}}>📋 Paste Your Data Here</div>
-        <div style={{color:S.muted,fontSize:12,marginBottom:12}}>You can paste anything — a copied spreadsheet row, typed notes, or any format. The AI will figure it out.</div>
-        <textarea
-          value={rawText}
-          onChange={e=>{setRawText(e.target.value);setError("");}}
-          rows={10}
-          placeholder={`Example — paste anything like this:\n\nBusiness: Hartley Builders Ltd\nContact: James Hartley\nTel: 0161 234 5678 / Mobile: 07712 345678\nAddress: 14 Birchwood Close, Manchester M23 4PQ\nSupplier: British Gas | Fuel: Dual Fuel\nMPAN: S1200000123456 | MPRN: 7812345678\nElec rate: 24.5p/kWh | Standing: 45p/day\nGas rate: 6.8p/kWh | Standing: 28p/day\nContract end: 15/08/2025\nBank: HSBC | Sort: 40-12-34 | Acc: 12345678`}
-          style={{width:"100%",boxSizing:"border-box",background:S.cardLL,border:`1px solid ${S.border}`,borderRadius:10,padding:"12px 14px",color:S.white,fontSize:13,resize:"vertical",fontFamily:"monospace",outline:"none"}}
-        />
-        {error&&<div style={{color:S.danger,fontSize:13,marginTop:10}}>⚠️ {error}</div>}
-        <div style={{marginTop:14,display:"flex",gap:10}}>
-          <Btn color={S.teal} onClick={handleExtract} disabled={loading}>
-            {loading?"🤖 Extracting data…":"🤖 Extract & Fill Fields"}
-          </Btn>
-          {rawText&&<Btn color={S.slate} outline onClick={()=>{setRawText("");setResult(null);setError("");}}>Clear</Btn>}
-        </div>
+      {/* Mode toggle */}
+      <div style={{display:"flex",gap:8,marginBottom:20}}>
+        {[["image","📷 Upload Photo / Scan"],["text","📋 Paste Text"]].map(([m,l])=>(
+          <button key={m} onClick={()=>{setMode(m);setError("");setResult(null);}} style={{background:mode===m?S.teal:"transparent",color:mode===m?S.navy:S.muted,border:`1.5px solid ${mode===m?S.teal:S.border}`,borderRadius:8,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>{l}</button>
+        ))}
       </div>
+
+      {/* IMAGE UPLOAD MODE */}
+      {mode==="image"&&(
+        <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
+          <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:8}}>📷 Upload Your Contact Sheet</div>
+          <div style={{color:S.muted,fontSize:12,marginBottom:16}}>Take a photo of your paper sheet with your phone, or scan it — then upload here. Works with any angle or lighting.</div>
+
+          {/* Drop zone */}
+          <div
+            onClick={()=>fileRef.current?.click()}
+            style={{border:`2px dashed ${imageFile?S.teal:S.border}`,borderRadius:12,padding:32,textAlign:"center",cursor:"pointer",background:imageFile?S.tealGlow:"transparent",transition:"all 0.2s"}}
+          >
+            {imagePreview?(
+              <div>
+                <img src={imagePreview} alt="Sheet preview" style={{maxWidth:"100%",maxHeight:300,borderRadius:8,marginBottom:12}}/>
+                <div style={{color:S.teal,fontSize:13,fontWeight:600}}>{imageFile.name} — ready to extract</div>
+              </div>
+            ):(
+              <div>
+                <div style={{fontSize:48,marginBottom:12}}>📄</div>
+                <div style={{color:S.off,fontWeight:600,fontSize:15}}>Click to upload photo or scan</div>
+                <div style={{color:S.muted,fontSize:12,marginTop:6}}>JPG, PNG, PDF — take a photo with your phone camera</div>
+              </div>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept="image/*,.pdf" onChange={handleImageChange} style={{display:"none"}}/>
+
+          {error&&<div style={{color:S.danger,fontSize:13,marginTop:12}}>⚠️ {error}</div>}
+          <div style={{marginTop:16,display:"flex",gap:10}}>
+            <Btn color={S.teal} onClick={handleExtractImage} disabled={loading||!imageFile}>
+              {loading?"🤖 Reading sheet…":"🤖 Extract Data from Image"}
+            </Btn>
+            {imageFile&&<Btn color={S.slate} outline onClick={()=>{setImageFile(null);setImagePreview(null);setResult(null);setError("");}}>Clear</Btn>}
+          </div>
+        </div>
+      )}
+
+      {/* TEXT PASTE MODE */}
+      {mode==="text"&&(
+        <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
+          <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:8}}>📋 Paste Your Data Here</div>
+          <div style={{color:S.muted,fontSize:12,marginBottom:12}}>Paste anything — copied spreadsheet, typed notes, any format.</div>
+          <textarea
+            value={rawText}
+            onChange={e=>{setRawText(e.target.value);setError("");}}
+            rows={10}
+            placeholder={`Business: Hartley Builders Ltd\nContact: James Hartley\nTel: 0161 234 5678\nMobile: 07712 345678\nAddress: 14 Birchwood Close, Manchester M23 4PQ\nSupplier: British Gas\nMPAN: S1200000123456\nElec rate: 24.5p | Standing: 45p\nContract end: 15/08/2025\nBank: HSBC | Sort: 40-12-34 | Acc: 12345678`}
+            style={{width:"100%",boxSizing:"border-box",background:S.cardLL,border:`1px solid ${S.border}`,borderRadius:10,padding:"12px 14px",color:S.white,fontSize:13,resize:"vertical",fontFamily:"monospace",outline:"none"}}
+          />
+          {error&&<div style={{color:S.danger,fontSize:13,marginTop:10}}>⚠️ {error}</div>}
+          <div style={{marginTop:14,display:"flex",gap:10}}>
+            <Btn color={S.teal} onClick={handleExtractText} disabled={loading}>
+              {loading?"⏳ Extracting…":"🤖 Extract & Fill Fields"}
+            </Btn>
+            {rawText&&<Btn color={S.slate} outline onClick={()=>{setRawText("");setResult(null);setError("");}}>Clear</Btn>}
+          </div>
+        </div>
+      )}
+
 
       {/* Extracted result preview */}
       {result&&(

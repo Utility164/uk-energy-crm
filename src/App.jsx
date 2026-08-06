@@ -426,7 +426,7 @@ function RenewalModal({customers,users,onClose,onAction}){
 // ═══════════════════════════════════════════════════════════
 const emptyCustomer=(agentId,agentName)=>({
   agentId,agentName,date:today(),businessName:"",contactPersonName:"",
-  telephoneNo:"",landlineNo:"",mobileNo:"",supplyAddress:"",postcode:"",
+  telephoneNo:"",landlineNo:"",mobileNo:"",email:"",supplyAddress:"",postcode:"",
   commercialRes:"Commercial",companyRegNo:"",
   elec1Supplier:"British Gas",elec1SupplyNo:"",elec1OfferRate:"",elec1SCharge:"",
   elec1Day:"",elec1Night:"",elec1EveWend:"",elec1ContractTerm:"",elec1NameOnBill:"",
@@ -479,6 +479,7 @@ function CustomerForm({initial,agentId,agentName,onSave,onCancel,isManager,agent
           <Inp label="Telephone No"     k="telephoneNo"       f={f} set={set} type="tel" placeholder="01xxx xxxxxx"/>
           <Inp label="Mobile No"        k="mobileNo"          f={f} set={set} type="tel" placeholder="07xxx xxxxxx"/>
           <Inp label="Landline No"      k="landlineNo"        f={f} set={set} type="tel" placeholder="0161 xxx xxxx"/>
+          <Inp label="Email Address"    k="email"             f={f} set={set} type="email" placeholder="name@email.co.uk"/>
           <Inp label="Supply Address"   k="supplyAddress"     f={f} set={set} span={2}/>
           <Inp label="Postcode"         k="postcode"          f={f} set={set}/>
         </G>
@@ -581,12 +582,12 @@ function CustomerForm({initial,agentId,agentName,onSave,onCancel,isManager,agent
 function AgentManagement({users,saveUser,delUser}){
   const [showForm,setShowForm]=useState(false);
   const [editUser,setEditUser]=useState(null);
-  const [form,setForm]=useState({name:"",username:"",password:"",email:"",role:"agent",active:true});
+  const [form,setForm]=useState({name:"",username:"",password:"",email:"",role:"agent",active:true,canViewFullDetails:false});
   const [msg,setMsg]=useState("");
   const [saving,setSaving]=useState(false);
   const setF=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  const openNew =()=>{setForm({name:"",username:"",password:"",email:"",role:"agent",active:true});setEditUser(null);setShowForm(true);};
+  const openNew =()=>{setForm({name:"",username:"",password:"",email:"",role:"agent",active:true,canViewFullDetails:false});setEditUser(null);setShowForm(true);};
   const openEdit=u=>{setForm({...u});setEditUser(u);setShowForm(true);};
 
   const handleSave=async()=>{
@@ -606,9 +607,15 @@ function AgentManagement({users,saveUser,delUser}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
           <div style={{fontSize:20,fontWeight:800}}>👥 Agent Management</div>
-          <div style={{color:S.muted,fontSize:13,marginTop:2}}>Create and manage agent login credentials — {IS_CONFIGURED?"saved to Firebase":"demo mode"}</div>
+          <div style={{color:S.muted,fontSize:13,marginTop:2}}>Manage agent accounts & control what each agent can see</div>
         </div>
         <Btn color={S.teal} onClick={openNew}>+ Add Agent</Btn>
+      </div>
+
+      {/* Permission explanation */}
+      <div style={{background:S.amberGlow,border:`1px solid ${S.amber}40`,borderRadius:12,padding:"12px 16px",marginBottom:20,fontSize:13}}>
+        <span style={{color:S.amber,fontWeight:700}}>👑 Manager Control: </span>
+        <span style={{color:S.off}}>By default agents only see <b>Business Name, Customer Name, Telephone, Email & Contract End Date</b>. Toggle <b>"Full Details"</b> below to allow an agent to see complete contract information.</span>
       </div>
 
       {msg&&<div style={{background:S.greenGlow,border:`1px solid ${S.green}50`,borderRadius:10,padding:"10px 16px",color:S.green,fontSize:13,marginBottom:16}}>✅ {msg}</div>}
@@ -624,11 +631,27 @@ function AgentManagement({users,saveUser,delUser}){
                   style={{width:"100%",boxSizing:"border-box",background:S.cardLL,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 12px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none"}}/>
               </label>
             ))}
-            <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:22}}>
-              <input type="checkbox" checked={form.active} onChange={e=>setF("active",e.target.checked)} style={{width:16,height:16,accentColor:S.teal}}/>
-              <span style={{color:S.off,fontSize:13}}>Account Active</span>
-            </div>
           </G>
+          {/* Permission toggles */}
+          <div style={{marginTop:16,background:S.cardL,borderRadius:10,padding:16}}>
+            <div style={{color:S.mutedL,fontWeight:700,fontSize:12,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Permissions</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <input type="checkbox" checked={form.active} onChange={e=>setF("active",e.target.checked)} style={{width:16,height:16,accentColor:S.teal}}/>
+                <div>
+                  <div style={{color:S.off,fontSize:13,fontWeight:600}}>Account Active</div>
+                  <div style={{color:S.muted,fontSize:11}}>Agent can log in and use the CRM</div>
+                </div>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <input type="checkbox" checked={form.canViewFullDetails||false} onChange={e=>setF("canViewFullDetails",e.target.checked)} style={{width:16,height:16,accentColor:S.purple}}/>
+                <div>
+                  <div style={{color:S.off,fontSize:13,fontWeight:600}}>Allow Full Contract Details</div>
+                  <div style={{color:S.muted,fontSize:11}}>Agent can see all fields — energy rates, bank details, director info, remarks etc.</div>
+                </div>
+              </label>
+            </div>
+          </div>
           <div style={{display:"flex",gap:10,marginTop:18}}>
             <Btn color={S.teal} onClick={handleSave} disabled={saving}>{saving?"⏳ Saving…":"💾 Save Agent"}</Btn>
             <Btn color={S.slate} outline onClick={()=>setShowForm(false)}>Cancel</Btn>
@@ -638,26 +661,43 @@ function AgentManagement({users,saveUser,delUser}){
 
       <div style={{display:"grid",gap:12}}>
         {agents.map(u=>(
-          <div key={u.id} style={{background:S.card,borderRadius:12,padding:18,border:`1px solid ${u.active?S.border:S.danger+"40"}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-            <div>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div style={{width:42,height:42,borderRadius:"50%",background:`linear-gradient(135deg,${S.teal},${S.purple})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:17,color:S.navy,flexShrink:0}}>{u.name.charAt(0)}</div>
+          <div key={u.id} style={{background:S.card,borderRadius:12,padding:18,border:`1px solid ${u.active?S.border:S.danger+"40"}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:44,height:44,borderRadius:"50%",background:`linear-gradient(135deg,${S.teal},${S.purple})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:18,color:S.navy,flexShrink:0}}>{u.name.charAt(0)}</div>
                 <div>
                   <div style={{fontWeight:700,fontSize:15}}>{u.name}</div>
                   <div style={{color:S.muted,fontSize:12}}>@{u.username} · {u.email||"No email"}</div>
+                  <div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontFamily:"monospace",fontSize:11,color:S.muted,background:S.cardL,padding:"3px 8px",borderRadius:6}}>{u.id}</span>
+                    <span style={{fontFamily:"monospace",fontSize:11,color:S.teal,background:S.tealGlow,padding:"3px 8px",borderRadius:6}}>🔑 {u.password}</span>
+                    <span style={{fontSize:11,color:u.active?S.green:S.danger,fontWeight:700}}>{u.active?"● Active":"● Inactive"}</span>
+                  </div>
                 </div>
               </div>
-              <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontFamily:"monospace",fontSize:11,color:S.muted,background:S.cardL,padding:"3px 8px",borderRadius:6}}>{u.id}</span>
-                <span style={{fontFamily:"monospace",fontSize:11,color:S.teal,background:S.tealGlow,padding:"3px 8px",borderRadius:6}}>🔑 {u.password}</span>
-                <span style={{fontSize:11,color:u.active?S.green:S.danger,fontWeight:700}}>{u.active?"● Active":"● Inactive"}</span>
-                {IS_CONFIGURED&&<span style={{fontSize:11,color:S.green}}>☁️ Synced</span>}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <Btn color={S.teal} sm onClick={()=>openEdit(u)}>✏️ Edit</Btn>
+                <Btn color={u.active?S.amber:S.green} sm onClick={()=>saveUser({...u,active:!u.active})}>{u.active?"⏸ Deactivate":"▶ Activate"}</Btn>
+                <Btn color={S.danger} sm onClick={()=>{if(window.confirm("Delete agent?"))delUser(u.id);}}>🗑</Btn>
               </div>
             </div>
-            <div style={{display:"flex",gap:8}}>
-              <Btn color={S.teal} sm onClick={()=>openEdit(u)}>✏️ Edit</Btn>
-              <Btn color={u.active?S.amber:S.green} sm onClick={()=>saveUser({...u,active:!u.active})}>{u.active?"⏸ Deactivate":"▶ Activate"}</Btn>
-              <Btn color={S.danger} sm onClick={()=>{if(window.confirm("Delete agent?"))delUser(u.id);}}>🗑</Btn>
+
+            {/* Permission display + quick toggle */}
+            <div style={{marginTop:14,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",paddingTop:12,borderTop:`1px solid ${S.border}`}}>
+              <div style={{color:S.muted,fontSize:12,fontWeight:600}}>📋 Contract View:</div>
+              <div style={{
+                background:u.canViewFullDetails?S.purpleGlow:S.tealGlow,
+                border:`1px solid ${u.canViewFullDetails?S.purple:S.teal}40`,
+                borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700,
+                color:u.canViewFullDetails?S.purple:S.teal,
+              }}>
+                {u.canViewFullDetails?"👁 Full Details Allowed":"🔒 Simplified View Only"}
+              </div>
+              <button
+                onClick={()=>saveUser({...u,canViewFullDetails:!u.canViewFullDetails})}
+                style={{background:"transparent",border:`1px solid ${u.canViewFullDetails?S.danger:S.purple}`,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700,color:u.canViewFullDetails?S.danger:S.purple,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>
+                {u.canViewFullDetails?"🔒 Restrict to Simplified":"👁 Grant Full Details"}
+              </button>
             </div>
           </div>
         ))}
@@ -733,11 +773,31 @@ function ManagerAnalytics({customers,users}){
 // ═══════════════════════════════════════════════════════════
 //  CUSTOMER DETAIL
 // ═══════════════════════════════════════════════════════════
-function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isManager}){
+function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isManager,canViewFull,onPrev,onNext,idx,total}){
   const d=nearExpiry(c);
   return(
     <div>
-      <button onClick={onBack} style={{background:"transparent",color:S.teal,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,marginBottom:16,padding:0}}>← Back</button>
+      {/* Top nav bar — Back + Prev/Next */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
+        <button onClick={onBack} style={{background:"transparent",color:S.teal,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,padding:0}}>← Back to Contracts</button>
+
+        {/* Prev / Next navigation */}
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button
+            onClick={onPrev} disabled={!onPrev}
+            style={{background:onPrev?S.cardL:"transparent",border:`1px solid ${onPrev?S.border:"transparent"}`,borderRadius:8,padding:"6px 14px",color:onPrev?S.white:S.muted,fontSize:13,fontWeight:600,cursor:onPrev?"pointer":"not-allowed",fontFamily:"Inter,system-ui,sans-serif",opacity:onPrev?1:0.35}}>
+            ← Prev
+          </button>
+          <div style={{color:S.muted,fontSize:12,padding:"0 6px",minWidth:70,textAlign:"center"}}>
+            {idx+1} of {total}
+          </div>
+          <button
+            onClick={onNext} disabled={!onNext}
+            style={{background:onNext?S.teal:"transparent",border:`1px solid ${onNext?S.teal:"transparent"}`,borderRadius:8,padding:"6px 14px",color:onNext?S.navy:S.muted,fontSize:13,fontWeight:700,cursor:onNext?"pointer":"not-allowed",fontFamily:"Inter,system-ui,sans-serif",opacity:onNext?1:0.35}}>
+            Next →
+          </button>
+        </div>
+      </div>
       <div style={{background:S.card,borderRadius:16,padding:28}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12,marginBottom:22}}>
           <div>
@@ -747,6 +807,7 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
               <Badge label={c.renewalStatus}/>
               {c.commercialRes&&<span style={{background:S.tealGlow,color:S.teal,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20}}>{c.commercialRes}</span>}
               {IS_CONFIGURED&&<span style={{background:S.greenGlow,color:S.green,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20}}>☁️ Firebase</span>}
+              {!canViewFull&&<span style={{background:S.amberGlow,color:S.amber,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20}}>🔒 Limited View</span>}
             </div>
           </div>
           <div style={{display:"flex",gap:8}}>
@@ -765,63 +826,86 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
           </div>
         )}
 
+        {/* Limited view banner for restricted agents */}
+        {!canViewFull&&(
+          <div style={{background:S.purpleGlow,border:`1px solid ${S.purple}40`,borderRadius:12,padding:"12px 18px",marginBottom:22,display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:20}}>🔒</span>
+            <div style={{color:S.off,fontSize:13}}>You are viewing <b style={{color:S.purple}}>limited details</b>. Contact your manager to request access to full contract information.</div>
+          </div>
+        )}
+
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16}}>
+          {/* Always visible — contact details */}
           <DBox title="📋 Contact Details" color={S.teal}>
             <DI label="Business"       value={c.businessName} hi/>
             <DI label="Contact Person" value={c.contactPersonName}/>
             <DI label="Telephone No"   value={c.telephoneNo} hi/>
             <DI label="Mobile No"      value={c.mobileNo} hi/>
             <DI label="Landline No"    value={c.landlineNo}/>
+            <DI label="Email Address"  value={c.email}/>
             <DI label="Address"        value={`${c.supplyAddress||""}${c.postcode?", "+c.postcode:""}`}/>
             <DI label="Company Reg"    value={c.companyRegNo}/>
           </DBox>
-          <DBox title="⚡ Electricity — Meter 1" color={S.teal}>
-            <DI label="Supplier"           value={c.elec1Supplier}/>
-            <DI label="MPAN"               value={c.elec1SupplyNo}/>
-            <DI label="Offer Rate"         value={c.elec1OfferRate?`${c.elec1OfferRate}p/kWh`:"—"} hi/>
-            <DI label="Standing Charge"    value={c.elec1SCharge?`${c.elec1SCharge}p/day`:"—"} hi/>
-            <DI label="Day/Night/Eve"      value={[c.elec1Day&&`D:${c.elec1Day}p`,c.elec1Night&&`N:${c.elec1Night}p`,c.elec1EveWend&&`E:${c.elec1EveWend}p`].filter(Boolean).join(" · ")||"—"}/>
-            <DI label="Annual Usage"       value={c.elec1AnnualConsumption?`${Number(c.elec1AnnualConsumption).toLocaleString()} kWh`:"—"}/>
-            <DI label="Contract End"       value={fmtDate(c.elec1ContractEnd)}/>
-            <DI label="Meter Serial"       value={c.elec1MeterSerial}/>
+
+          {/* Contract end dates — always visible */}
+          <DBox title="📅 Contract Dates" color={S.amber}>
+            <DI label="Elec Contract End"  value={fmtDate(c.elec1ContractEnd)} hi/>
+            <DI label="Gas Contract End"   value={fmtDate(c.gas1ContractEnd)} hi/>
+            <DI label="Elec Contract Term" value={c.elec1ContractTerm}/>
+            <DI label="Gas Contract Term"  value={c.gas1ContractTerm}/>
+            <DI label="Days Remaining"     value={d!==null?`${d} days`:null}/>
           </DBox>
-          <DBox title="🔥 Gas — Meter 1" color={S.purple}>
-            <DI label="Supplier"       value={c.gas1Supplier}/>
-            <DI label="MPRN"           value={c.gas1MPRN}/>
-            <DI label="Unit Rate"      value={c.gas1UnitRate?`${c.gas1UnitRate}p/kWh`:"—"} hi/>
-            <DI label="Standing"       value={c.gas1OfferedSCharge?`${c.gas1OfferedSCharge}p/day`:"—"} hi/>
-            <DI label="AQ Usage"       value={c.gas1AQ?`${Number(c.gas1AQ).toLocaleString()} kWh`:"—"}/>
-            <DI label="Start / End"    value={`${fmtDate(c.gas1ContractStart)} → ${fmtDate(c.gas1ContractEnd)}`}/>
-            <DI label="Site No (BG)"   value={c.gas1SiteNoBG}/>
-            <DI label="Meter Serial"   value={c.gas1MeterSerial}/>
-          </DBox>
-          <DBox title="🏦 Bank Details" color={S.green}>
-            <DI label="Bank"           value={c.bankName}/>
-            <DI label="Account Title"  value={c.accountTitle}/>
-            <DI label="Sort Code"      value={c.sortCode}/>
-            <DI label="Account No"     value={c.accountNo}/>
-            <DI label="Payment"        value={c.billPaymentMethod}/>
-            <DI label="Landlord"       value={c.landlordName}/>
-          </DBox>
-          <DBox title="👤 Director Details" color={S.amber}>
-            <DI label="Home Address"   value={c.directorsHomeAddress}/>
-            <DI label="Date of Birth"  value={fmtDate(c.directorsDOB)}/>
-            <DI label="New Customer"   value={c.nameOfNewCustomer}/>
-          </DBox>
-          {[1,2,3,4,5,6,7,8,9,10].some(n=>c[`remark${n}`])&&(
-            <DBox title="📝 Remarks" color={S.amber}>
-              {[1,2,3,4,5,6,7,8,9,10].filter(n=>c[`remark${n}`]).map(n=>(
-                <div key={n} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                  <div style={{width:22,height:22,borderRadius:"50%",background:`linear-gradient(135deg,${S.amber},${S.amberD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:S.navy,flexShrink:0,marginTop:1}}>{n}</div>
-                  <div style={{color:S.off,fontSize:13,lineHeight:1.6}}>{c[`remark${n}`]}</div>
-                </div>
-              ))}
-              {(c.checkedByManager||c.checkedByEditor)&&<>
-                <DI label="Checked (Manager)" value={c.checkedByManager}/>
-                <DI label="Checked (Editor)"  value={c.checkedByEditor}/>
-              </>}
+
+          {/* Full details — only if canViewFull */}
+          {canViewFull&&<>
+            <DBox title="⚡ Electricity — Meter 1" color={S.teal}>
+              <DI label="Supplier"           value={c.elec1Supplier}/>
+              <DI label="MPAN"               value={c.elec1SupplyNo}/>
+              <DI label="Offer Rate"         value={c.elec1OfferRate?`${c.elec1OfferRate}p/kWh`:"—"} hi/>
+              <DI label="Standing Charge"    value={c.elec1SCharge?`${c.elec1SCharge}p/day`:"—"} hi/>
+              <DI label="Day/Night/Eve"      value={[c.elec1Day&&`D:${c.elec1Day}p`,c.elec1Night&&`N:${c.elec1Night}p`,c.elec1EveWend&&`E:${c.elec1EveWend}p`].filter(Boolean).join(" · ")||"—"}/>
+              <DI label="Annual Usage"       value={c.elec1AnnualConsumption?`${Number(c.elec1AnnualConsumption).toLocaleString()} kWh`:"—"}/>
+              <DI label="Meter Serial"       value={c.elec1MeterSerial}/>
+              <DI label="Name on Bill"       value={c.elec1NameOnBill}/>
             </DBox>
-          )}
+            <DBox title="🔥 Gas — Meter 1" color={S.purple}>
+              <DI label="Supplier"       value={c.gas1Supplier}/>
+              <DI label="MPRN"           value={c.gas1MPRN}/>
+              <DI label="Unit Rate"      value={c.gas1UnitRate?`${c.gas1UnitRate}p/kWh`:"—"} hi/>
+              <DI label="Standing"       value={c.gas1OfferedSCharge?`${c.gas1OfferedSCharge}p/day`:"—"} hi/>
+              <DI label="AQ Usage"       value={c.gas1AQ?`${Number(c.gas1AQ).toLocaleString()} kWh`:"—"}/>
+              <DI label="Start / End"    value={`${fmtDate(c.gas1ContractStart)} → ${fmtDate(c.gas1ContractEnd)}`}/>
+              <DI label="Site No (BG)"   value={c.gas1SiteNoBG}/>
+              <DI label="Meter Serial"   value={c.gas1MeterSerial}/>
+            </DBox>
+            <DBox title="🏦 Bank Details" color={S.green}>
+              <DI label="Bank"           value={c.bankName}/>
+              <DI label="Account Title"  value={c.accountTitle}/>
+              <DI label="Sort Code"      value={c.sortCode}/>
+              <DI label="Account No"     value={c.accountNo}/>
+              <DI label="Payment"        value={c.billPaymentMethod}/>
+              <DI label="Landlord"       value={c.landlordName}/>
+            </DBox>
+            <DBox title="👤 Director Details" color={S.amber}>
+              <DI label="Home Address"   value={c.directorsHomeAddress}/>
+              <DI label="Date of Birth"  value={fmtDate(c.directorsDOB)}/>
+              <DI label="New Customer"   value={c.nameOfNewCustomer}/>
+            </DBox>
+            {[1,2,3,4,5,6,7,8,9,10].some(n=>c[`remark${n}`])&&(
+              <DBox title="📝 Remarks" color={S.amber}>
+                {[1,2,3,4,5,6,7,8,9,10].filter(n=>c[`remark${n}`]).map(n=>(
+                  <div key={n} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <div style={{width:22,height:22,borderRadius:"50%",background:`linear-gradient(135deg,${S.amber},${S.amberD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:S.navy,flexShrink:0,marginTop:1}}>{n}</div>
+                    <div style={{color:S.off,fontSize:13,lineHeight:1.6}}>{c[`remark${n}`]}</div>
+                  </div>
+                ))}
+                {(c.checkedByManager||c.checkedByEditor)&&<>
+                  <DI label="Checked (Manager)" value={c.checkedByManager}/>
+                  <DI label="Checked (Editor)"  value={c.checkedByEditor}/>
+                </>}
+              </DBox>
+            )}
+          </>}
         </div>
 
         <div style={{marginTop:20,display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -830,6 +914,21 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
           <Btn color={S.amber}  onClick={()=>onStatusChange(c.id,"Pending")}>⏳ Pending</Btn>
           <Btn color={S.danger} outline onClick={()=>onStatusChange(c.id,"Declined")}>✖ Declined</Btn>
         </div>
+
+        {/* Bottom Prev/Next */}
+        {(onPrev||onNext)&&(
+          <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${S.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <button onClick={onPrev} disabled={!onPrev}
+              style={{background:onPrev?S.cardL:"transparent",border:`1px solid ${onPrev?S.border:"transparent"}`,borderRadius:8,padding:"8px 20px",color:onPrev?S.white:S.muted,fontSize:13,fontWeight:600,cursor:onPrev?"pointer":"not-allowed",fontFamily:"Inter,system-ui,sans-serif",opacity:onPrev?1:0.35}}>
+              ← Previous Customer
+            </button>
+            <div style={{color:S.muted,fontSize:12}}>{idx+1} of {total}</div>
+            <button onClick={onNext} disabled={!onNext}
+              style={{background:onNext?S.teal:"transparent",border:`1px solid ${onNext?S.teal:"transparent"}`,borderRadius:8,padding:"8px 20px",color:onNext?S.navy:S.muted,fontSize:13,fontWeight:700,cursor:onNext?"pointer":"not-allowed",fontFamily:"Inter,system-ui,sans-serif",opacity:onNext?1:0.35}}>
+              Next Customer →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -838,7 +937,7 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
 // ═══════════════════════════════════════════════════════════
 //  CUSTOMER LIST
 // ═══════════════════════════════════════════════════════════
-function CustomerList({customers,onSelect,onAdd,agentFilter}){
+function CustomerList({customers,onSelect,onAdd,agentFilter,isManager}){
   const [filterBusiness,  setFilterBusiness]  = useState("");
   const [filterContact,   setFilterContact]   = useState("");
   const [filterTel,       setFilterTel]       = useState("");
@@ -855,7 +954,6 @@ function CustomerList({customers,onSelect,onAdd,agentFilter}){
     });
 
   const inpStyle={background:S.card,border:`1px solid ${S.border}`,borderRadius:8,padding:"8px 12px",color:S.white,fontSize:13,fontFamily:"Inter,system-ui,sans-serif",outline:"none",width:"100%",boxSizing:"border-box"};
-
   const hasFilters=filterBusiness||filterContact||filterTel||filterStatus!=="All";
 
   return(
@@ -892,28 +990,65 @@ function CustomerList({customers,onSelect,onAdd,agentFilter}){
         <div style={{color:S.muted,fontSize:12}}>{filtered.length} contract{filtered.length!==1?"s":""}{IS_CONFIGURED&&<span style={{color:S.green}}> · ☁️ Firebase live</span>}</div>
         {onAdd&&<Btn color={S.teal} onClick={onAdd}>+ New Contract</Btn>}
       </div>
-      {filtered.map(c=>{
-        const d=nearExpiry(c);
-        const ne=d!==null&&d<=180&&c.renewalStatus!=="Renewed";
-        return(
-          <div key={c.id} onClick={()=>onSelect(c)} style={{background:S.card,borderRadius:12,padding:16,marginBottom:10,border:`1px solid ${ne?S.amber+"50":S.border}`,cursor:"pointer",boxShadow:ne?`0 0 16px ${S.amber}12`:"none"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:15}}>{c.businessName||c.contactPersonName}
-                  <span style={{fontFamily:"monospace",fontSize:11,color:S.muted,background:S.cardL,padding:"2px 8px",borderRadius:6,marginLeft:8}}>{c.id}</span>
-                </div>
-                <div style={{color:S.muted,fontSize:12,marginTop:3}}>📞 {c.telephoneNo||c.mobileNo||c.landlineNo||"—"} · 📍 {c.supplyAddress} {c.postcode}</div>
-                <div style={{color:S.muted,fontSize:12,marginTop:2}}>
-                  ⚡ {c.elec1Supplier||"—"} · 🔥 {c.gas1Supplier||"—"} · Agent: <span style={{color:S.tealD}}>{c.agentName||"—"}</span>
-                  {d!==null&&<span style={{color:d<=30?S.danger:d<=60?S.amber:S.green,fontWeight:700}}> · {d}d</span>}
+
+      {/* ── AGENT VIEW — simplified 5-column table ── */}
+      {!isManager&&(
+        <div>
+          {/* Table header */}
+          <div style={{display:"grid",gridTemplateColumns:"2fr 2fr 2fr 2fr 1.5fr",gap:8,padding:"8px 14px",marginBottom:6,background:S.cardL,borderRadius:8}}>
+            {["🏢 Business Name","👤 Customer Name","📞 Telephone","✉️ Email","📅 Contract End"].map(h=>(
+              <div key={h} style={{color:S.teal,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
+            ))}
+          </div>
+          {filtered.map(c=>{
+            const d=nearExpiry(c);
+            const ne=d!==null&&d<=180&&c.renewalStatus!=="Renewed";
+            const urg=d===null?null:d<=30?S.danger:d<=60?S.amber:S.green;
+            return(
+              <div key={c.id} onClick={()=>onSelect(c)}
+                style={{display:"grid",gridTemplateColumns:"2fr 2fr 2fr 2fr 1.5fr",gap:8,padding:"12px 14px",background:S.card,borderRadius:10,marginBottom:8,cursor:"pointer",border:`1px solid ${ne?S.amber+"50":S.border}`,alignItems:"center"}}>
+                <div style={{fontWeight:700,fontSize:13,color:S.white,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.businessName||"—"}</div>
+                <div style={{fontSize:13,color:S.off,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.contactPersonName||"—"}</div>
+                <div style={{fontSize:13,color:S.teal,fontWeight:600}}>{c.telephoneNo||c.mobileNo||c.landlineNo||"—"}</div>
+                <div style={{fontSize:12,color:S.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.email||"—"}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  <div style={{fontSize:12,color:urg||S.muted,fontWeight:urg?700:400}}>{fmtDate(c.elec1ContractEnd||c.gas1ContractEnd)}</div>
+                  {d!==null&&<div style={{fontSize:11,color:urg,fontWeight:700}}>{d}d left</div>}
                 </div>
               </div>
-              <Badge label={c.renewalStatus}/>
-            </div>
-          </div>
-        );
-      })}
-      {!filtered.length&&<div style={{color:S.muted,textAlign:"center",padding:40}}>No contracts found.</div>}
+            );
+          })}
+          {!filtered.length&&<div style={{color:S.muted,textAlign:"center",padding:40}}>No contracts found.</div>}
+        </div>
+      )}
+
+      {/* ── MANAGER VIEW — full detail cards ── */}
+      {isManager&&(
+        <div>
+          {filtered.map(c=>{
+            const d=nearExpiry(c);
+            const ne=d!==null&&d<=180&&c.renewalStatus!=="Renewed";
+            return(
+              <div key={c.id} onClick={()=>onSelect(c)} style={{background:S.card,borderRadius:12,padding:16,marginBottom:10,border:`1px solid ${ne?S.amber+"50":S.border}`,cursor:"pointer",boxShadow:ne?`0 0 16px ${S.amber}12`:"none"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:15}}>{c.businessName||c.contactPersonName}
+                      <span style={{fontFamily:"monospace",fontSize:11,color:S.muted,background:S.cardL,padding:"2px 8px",borderRadius:6,marginLeft:8}}>{c.id}</span>
+                    </div>
+                    <div style={{color:S.muted,fontSize:12,marginTop:3}}>📞 {c.telephoneNo||c.mobileNo||c.landlineNo||"—"} · ✉️ {c.email||"—"} · 📍 {c.supplyAddress} {c.postcode}</div>
+                    <div style={{color:S.muted,fontSize:12,marginTop:2}}>
+                      ⚡ {c.elec1Supplier||"—"} · 🔥 {c.gas1Supplier||"—"} · Agent: <span style={{color:S.tealD}}>{c.agentName||"—"}</span>
+                      {d!==null&&<span style={{color:d<=30?S.danger:d<=60?S.amber:S.green,fontWeight:700}}> · {d}d</span>}
+                    </div>
+                  </div>
+                  <Badge label={c.renewalStatus}/>
+                </div>
+              </div>
+            );
+          })}
+          {!filtered.length&&<div style={{color:S.muted,textAlign:"center",padding:40}}>No contracts found.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1258,6 +1393,7 @@ export default function App(){
   if(!currentUser)return <LoginScreen users={users} onLogin={handleLogin}/>;
 
   const isManager=currentUser.role==="manager";
+  const canViewFull = isManager || (users.find(u=>u.id===currentUser.id)?.canViewFullDetails===true);
   const myCustomers=isManager?customers:customers.filter(c=>c.agentId===currentUser.id);
   const agents=users.filter(u=>u.role==="agent");
   const renewalDue=myCustomers.filter(c=>{const d=nearExpiry(c);return d!==null&&d<=180&&c.renewalStatus!=="Renewed"&&c.renewalStatus!=="Declined";}).length;
@@ -1366,11 +1502,26 @@ export default function App(){
           </div>
         )}
 
-        {view==="contracts"&&<CustomerList customers={customers} agentFilter={isManager?null:currentUser.id} onSelect={c=>{setSelected(c);setView("detail");}} onAdd={()=>{setSelected(null);setView("add");}}/>}
+        {view==="contracts"&&<CustomerList customers={customers} agentFilter={isManager?null:currentUser.id} isManager={canViewFull} onSelect={c=>{setSelected(c);setView("detail");}} onAdd={()=>{setSelected(null);setView("add");}}/>}
 
         {(view==="add"||view==="edit")&&<CustomerForm initial={view==="edit"?selected:null} agentId={currentUser.id} agentName={currentUser.name} isManager={isManager} agents={agents} onSave={handleSaveCustomer} onCancel={()=>setView(selected?"detail":"contracts")}/>}
 
-        {view==="detail"&&selected&&<CustomerDetail customer={customers.find(x=>x.id===selected.id)||selected} isManager={isManager} onEdit={()=>setView("edit")} onDelete={()=>handleDeleteCustomer(selected.id)} onStatusChange={handleStatusChange} onBack={()=>setView("contracts")}/>}
+        {view==="detail"&&selected&&(()=>{
+          const navList = isManager ? customers : customers.filter(c=>c.agentId===currentUser.id);
+          const idx = navList.findIndex(x=>x.id===selected.id);
+          const onPrev = idx>0 ? ()=>setSelected(navList[idx-1]) : null;
+          const onNext = idx<navList.length-1 ? ()=>setSelected(navList[idx+1]) : null;
+          return <CustomerDetail
+            customer={customers.find(x=>x.id===selected.id)||selected}
+            isManager={isManager} canViewFull={canViewFull}
+            onEdit={()=>setView("edit")}
+            onDelete={()=>handleDeleteCustomer(selected.id)}
+            onStatusChange={handleStatusChange}
+            onBack={()=>setView("contracts")}
+            onPrev={onPrev} onNext={onNext}
+            idx={idx} total={navList.length}
+          />;
+        })()}
 
         {view==="import"&&<AIImport currentUser={currentUser} agents={agents} isManager={isManager} onSave={async(c)=>{await saveCustomer(c);setView("contracts");}}/>}
 

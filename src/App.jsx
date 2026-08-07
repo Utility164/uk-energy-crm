@@ -771,6 +771,119 @@ function ManagerAnalytics({customers,users}){
 }
 
 // ═══════════════════════════════════════════════════════════
+//  WORD DOCUMENT GENERATOR
+// ═══════════════════════════════════════════════════════════
+async function generateWordDoc(c) {
+  const {
+    Document, Packer, Paragraph, Table, TableRow, TableCell,
+    TextRun, AlignmentType, WidthType, ShadingType, BorderStyle, Header,
+  } = await import("https://cdn.skypack.dev/docx@8.5.0");
+
+  const fmtD = s => s ? new Date(s).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—";
+  const v = x => x || "—";
+  const TEAL="00BFB3", NAVY="0D1B2A", WHITE="FFFFFF", LGRAY="F2F6FA", DGRAY="4A5568", PURPLE="7C3AED", GREEN="059669", AMBER="D97706", RED="DC2626";
+  const tblBorder={style:BorderStyle.SINGLE,size:4,color:"D1D5DB"};
+  const borders={top:tblBorder,bottom:tblBorder,left:tblBorder,right:tblBorder,insideH:tblBorder,insideV:tblBorder};
+
+  const cell=(text,opts={})=>new TableCell({
+    shading:{type:ShadingType.CLEAR,fill:opts.fill||WHITE},
+    columnSpan:opts.span||1,
+    width:{size:opts.w||2500,type:WidthType.DXA},
+    margins:{top:60,bottom:60,left:120,right:60},
+    children:[new Paragraph({alignment:opts.center?AlignmentType.CENTER:AlignmentType.LEFT,children:[new TextRun({text:String(text||"—"),bold:opts.bold||false,color:opts.color||"111827",size:opts.size||18})]})]
+  });
+
+  const secRow=(label,color=TEAL)=>new TableRow({children:[new TableCell({columnSpan:4,shading:{type:ShadingType.CLEAR,fill:color},margins:{top:80,bottom:80,left:120,right:120},children:[new Paragraph({children:[new TextRun({text:label,bold:true,color:WHITE,size:22})]})]})]});
+  const r2=(l1,v1,l2,v2,shade=false)=>new TableRow({children:[cell(l1,{bold:true,color:DGRAY,fill:shade?LGRAY:WHITE,w:2200}),cell(v(v1),{w:3000,fill:WHITE}),cell(l2,{bold:true,color:DGRAY,fill:shade?LGRAY:WHITE,w:2200}),cell(v(v2),{w:3000,fill:WHITE})]});
+  const r1=(l1,v1,shade=false)=>new TableRow({children:[cell(l1,{bold:true,color:DGRAY,fill:shade?LGRAY:WHITE,w:2200}),new TableCell({columnSpan:3,shading:{type:ShadingType.CLEAR,fill:WHITE},margins:{top:60,bottom:60,left:120,right:60},children:[new Paragraph({children:[new TextRun({text:v(v1),size:18})]})]})]}); 
+  const mkTable=rows=>new Table({width:{size:10200,type:WidthType.DXA},borders,rows});
+  const sp=()=>new Paragraph({text:"",spacing:{before:160,after:0}});
+
+  const remarkRows=[1,2,3,4,5,6,7,8,9,10].filter(n=>c[`remark${n}`]).map((n,i)=>
+    new TableRow({children:[
+      cell(`${n}.`,{bold:true,color:TEAL,fill:i%2===0?LGRAY:WHITE,w:500}),
+      new TableCell({columnSpan:3,shading:{type:ShadingType.CLEAR,fill:i%2===0?LGRAY:WHITE},margins:{top:60,bottom:60,left:120,right:60},children:[new Paragraph({children:[new TextRun({text:v(c[`remark${n}`]),size:18})]})]}),
+    ]})
+  );
+
+  const doc=new Document({sections:[{
+    properties:{page:{size:{width:12240,height:15840},margin:{top:720,bottom:720,left:900,right:900}}},
+    headers:{default:new Header({children:[new Paragraph({border:{bottom:{style:BorderStyle.SINGLE,size:6,color:TEAL}},spacing:{after:100},children:[new TextRun({text:"UK ENERGY CAMPAIGN — CONTRACT SHEET",bold:true,color:TEAL,size:20}),new TextRun({text:`    |    Agent: ${v(c.agentName)}    |    Date: ${v(c.date)}`,color:DGRAY,size:18})]})  ]})},
+    children:[
+      new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:80},children:[new TextRun({text:"CONTRACT SHEET",bold:true,color:NAVY,size:36})]}),
+      new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:v(c.businessName),bold:true,color:TEAL,size:28})]}),
+      mkTable([
+        secRow("📋  CONTACT DETAILS"),
+        r2("Business Name",c.businessName,"Company Reg No",c.companyRegNo),
+        r2("Contact Person",c.contactPersonName,"Type",c.commercialRes,true),
+        r2("Telephone No",c.telephoneNo,"Mobile No",c.mobileNo),
+        r2("Landline No",c.landlineNo,"Email",c.email,true),
+        r1("Supply Address",`${v(c.supplyAddress)}, ${v(c.postcode)}`),
+      ]),sp(),
+      mkTable([
+        secRow("⚡  ELECTRICITY — METER 1"),
+        r2("Current Supplier",c.elec1Supplier,"Supply No (MPAN)",c.elec1SupplyNo),
+        r2("Offer Rate (p/kWh)",c.elec1OfferRate,"Standing Charge",c.elec1SCharge,true),
+        r2("Day Rate",c.elec1Day,"Night Rate",c.elec1Night),
+        r2("Eve/Weekend Rate",c.elec1EveWend,"Contract Term",c.elec1ContractTerm,true),
+        r2("Contract End Date",fmtD(c.elec1ContractEnd),"Annual Consumption",c.elec1AnnualConsumption?c.elec1AnnualConsumption+" kWh":"—"),
+        r2("Meter Serial No",c.elec1MeterSerial,"Name on Bill",c.elec1NameOnBill,true),
+      ]),sp(),
+      mkTable([
+        secRow("⚡  ELECTRICITY — METER 2"),
+        r2("Current Supplier",c.elec2Supplier,"Supply No (MPAN)",c.elec2SupplyNo),
+        r2("Offer Rate (p/kWh)",c.elec2OfferRate,"Standing Charge",c.elec2SCharge,true),
+        r2("Day Rate",c.elec2Day,"Night Rate",c.elec2Night),
+        r2("Contract End Date",fmtD(c.elec2ContractEnd),"Meter Serial No",c.elec2MeterSerial,true),
+      ]),sp(),
+      mkTable([
+        secRow("🔥  GAS — METER 1",PURPLE),
+        r2("Current Supplier",c.gas1Supplier,"MPRN",c.gas1MPRN),
+        r2("Unit Rate (p/kWh)",c.gas1UnitRate,"Standing Charge",c.gas1OfferedSCharge,true),
+        r2("AQ Consumption",c.gas1AQ?c.gas1AQ+" kWh":"—","Contract Term",c.gas1ContractTerm),
+        r2("Contract Start",fmtD(c.gas1ContractStart),"Contract End",fmtD(c.gas1ContractEnd),true),
+        r2("Site No (BG)",c.gas1SiteNoBG,"Meter Serial No",c.gas1MeterSerial),
+        r2("Current Meter Read",c.gas1MeterRead,"Name on Bill",c.gas1NameOnBill,true),
+      ]),sp(),
+      mkTable([
+        secRow("🔥  GAS — METER 2",PURPLE),
+        r2("Current Supplier",c.gas2Supplier,"MPRN",c.gas2MPRN),
+        r2("Unit Rate (p/kWh)",c.gas2UnitRate,"Standing Charge",c.gas2OfferedSCharge,true),
+        r2("Contract Start",fmtD(c.gas2ContractStart),"Contract End",fmtD(c.gas2ContractEnd)),
+        r2("Meter Serial No",c.gas2MeterSerial,"Name on Bill",c.gas2NameOnBill,true),
+      ]),sp(),
+      mkTable([
+        secRow("🏦  BANK DETAILS",GREEN),
+        r2("Bank Name",c.bankName,"Account Title",c.accountTitle),
+        r2("Sort Code",c.sortCode,"Account No",c.accountNo,true),
+        r2("Payment Method",c.billPaymentMethod,"Landlord Name",c.landlordName),
+        r1("Branch Address",c.branchAddress,true),
+      ]),sp(),
+      mkTable([
+        secRow("👤  DIRECTOR DETAILS",AMBER),
+        r2("Director Home Address",c.directorsHomeAddress,"Date of Birth",fmtD(c.directorsDOB)),
+        r1("Name of New Customer",c.nameOfNewCustomer,true),
+      ]),sp(),
+      mkTable([
+        secRow("📝  REMARKS",RED),
+        ...(remarkRows.length?remarkRows:[new TableRow({children:[new TableCell({columnSpan:4,children:[new Paragraph({children:[new TextRun({text:"No remarks added.",color:DGRAY,size:18})]})],margins:{top:60,bottom:60,left:120,right:60}})]})]),
+        r2("Renewal Status",c.renewalStatus,"Checked (Manager)",c.checkedByManager),
+        r2("Checked (Editor)",c.checkedByEditor,"Agent Name",c.agentName,true),
+      ]),sp(),
+      new Paragraph({border:{top:{style:BorderStyle.SINGLE,size:4,color:"D1D5DB"}},spacing:{before:300},children:[new TextRun({text:"Signature: ______________________________    Date: _______________",color:DGRAY,size:18})]}),
+    ]
+  }]});
+
+  const buf=await Packer.toBlob(doc);
+  const url=URL.createObjectURL(buf);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=`${(c.businessName||c.contactPersonName||"contract").replace(/[^a-z0-9]/gi,"_")}_contract.docx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════
 //  CUSTOMER DETAIL
 // ═══════════════════════════════════════════════════════════
 function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isManager,canViewFull,onPrev,onNext,idx,total}){
@@ -908,11 +1021,19 @@ function CustomerDetail({customer:c,onEdit,onDelete,onStatusChange,onBack,isMana
           </>}
         </div>
 
-        <div style={{marginTop:20,display:"flex",gap:10,flexWrap:"wrap"}}>
+        <div style={{marginTop:20,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
           <Btn color={S.teal}   onClick={()=>onStatusChange(c.id,"Called")}>📞 Log Call</Btn>
           <Btn color={S.green}  onClick={()=>onStatusChange(c.id,"Renewed")}>✅ Renewed</Btn>
           <Btn color={S.amber}  onClick={()=>onStatusChange(c.id,"Pending")}>⏳ Pending</Btn>
           <Btn color={S.danger} outline onClick={()=>onStatusChange(c.id,"Declined")}>✖ Declined</Btn>
+          {isManager&&(
+            <div style={{marginLeft:"auto"}}>
+              <Btn color={S.purple} onClick={async()=>{
+                try{ await generateWordDoc(c); }
+                catch(e){ alert("Word download failed: "+e.message); }
+              }}>📄 Download Word</Btn>
+            </div>
+          )}
         </div>
 
         {/* Bottom Prev/Next */}
@@ -1068,11 +1189,38 @@ function AIImport({currentUser,agents,isManager,onSave}){
   const [saved,setSaved]=useState(false);
   const fileRef=useRef(null);
 
-  const handleImageChange=e=>{
+  const handleImageChange=async e=>{
     const file=e.target.files[0];
     if(!file)return;
     setImageFile(file);
     setError("");setResult(null);
+
+    // For Word/Excel — read as text immediately
+    if(file.name.match(/\.(xlsx|xls)$/i)){
+      try{
+        const XLSX=await import("https://cdn.skypack.dev/xlsx@0.18.5");
+        const buf=await file.arrayBuffer();
+        const wb=XLSX.read(buf,{type:"array"});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        const txt=XLSX.utils.sheet_to_csv(sheet);
+        setRawText(txt);
+        setMode("text");
+        setImagePreview(null);
+      }catch(e){ setError("Could not read Excel file: "+e.message); }
+      return;
+    }
+    if(file.name.match(/\.(docx|doc)$/i)){
+      try{
+        const mammoth=await import("https://cdn.skypack.dev/mammoth@1.6.0");
+        const buf=await file.arrayBuffer();
+        const res=await mammoth.extractRawText({arrayBuffer:buf});
+        setRawText(res.value);
+        setMode("text");
+        setImagePreview(null);
+      }catch(e){ setError("Could not read Word file: "+e.message); }
+      return;
+    }
+    // Image — show preview
     const reader=new FileReader();
     reader.onload=ev=>setImagePreview(ev.target.result);
     reader.readAsDataURL(file);
@@ -1269,13 +1417,24 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
               </div>
             ):(
               <div>
-                <div style={{fontSize:48,marginBottom:12}}>📄</div>
-                <div style={{color:S.off,fontWeight:600,fontSize:15}}>Click to upload photo or scan</div>
-                <div style={{color:S.muted,fontSize:12,marginTop:6}}>JPG, PNG, PDF — take a photo with your phone camera</div>
+                <div style={{fontSize:44,marginBottom:12}}>📎</div>
+                <div style={{color:S.off,fontWeight:600,fontSize:15}}>Click to upload your sheet</div>
+                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:12}}>
+                  {[["📷","Photo / Scan","JPG, PNG"],["📄","Word Doc",".docx, .doc"],["📊","Excel Sheet",".xlsx, .xls"],["🖼","PDF Scan",".pdf"]].map(([icon,label,ext])=>(
+                    <div key={label} style={{background:S.cardL,borderRadius:8,padding:"8px 12px",textAlign:"center",minWidth:80}}>
+                      <div style={{fontSize:22}}>{icon}</div>
+                      <div style={{color:S.off,fontSize:12,fontWeight:600,marginTop:4}}>{label}</div>
+                      <div style={{color:S.muted,fontSize:11}}>{ext}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
+            {imageFile&&!imagePreview&&(
+              <div style={{marginTop:12,color:S.teal,fontWeight:600,fontSize:14}}>✅ {imageFile.name} — text extracted, switching to text mode…</div>
+            )}
           </div>
-          <input ref={fileRef} type="file" accept="image/*,.pdf" onChange={handleImageChange} style={{display:"none"}}/>
+          <input ref={fileRef} type="file" accept="image/*,.pdf,.docx,.doc,.xlsx,.xls" onChange={handleImageChange} style={{display:"none"}}/>
 
           {error&&<div style={{color:S.danger,fontSize:13,marginTop:12}}>⚠️ {error}</div>}
           <div style={{marginTop:16,display:"flex",gap:10}}>

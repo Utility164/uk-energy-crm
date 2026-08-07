@@ -777,7 +777,7 @@ async function generateWordDoc(c) {
   const {
     Document, Packer, Paragraph, Table, TableRow, TableCell,
     TextRun, AlignmentType, WidthType, ShadingType, BorderStyle, Header,
-  } = await import("https://cdn.skypack.dev/docx@8.5.0");
+  } = await import("https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.mjs");
 
   const fmtD = s => s ? new Date(s).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—";
   const v = x => x || "—";
@@ -1198,7 +1198,7 @@ function AIImport({currentUser,agents,isManager,onSave}){
     // For Word/Excel — read as text immediately
     if(file.name.match(/\.(xlsx|xls)$/i)){
       try{
-        const XLSX=await import("https://cdn.skypack.dev/xlsx@0.18.5");
+        const XLSX=await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs");
         const buf=await file.arrayBuffer();
         const wb=XLSX.read(buf,{type:"array"});
         const sheet=wb.Sheets[wb.SheetNames[0]];
@@ -1206,18 +1206,34 @@ function AIImport({currentUser,agents,isManager,onSave}){
         setRawText(txt);
         setMode("text");
         setImagePreview(null);
-      }catch(e){ setError("Could not read Excel file: "+e.message); }
+      }catch(e){ setError("Could not read Excel file. Please try saving as .xlsx and uploading again, or use Paste Text instead."); }
       return;
     }
     if(file.name.match(/\.(docx|doc)$/i)){
       try{
-        const mammoth=await import("https://cdn.skypack.dev/mammoth@1.6.0");
+        const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
         const buf=await file.arrayBuffer();
         const res=await mammoth.extractRawText({arrayBuffer:buf});
         setRawText(res.value);
         setMode("text");
         setImagePreview(null);
-      }catch(e){ setError("Could not read Word file: "+e.message); }
+      }catch(e){
+        // Fallback: read as plain text if mammoth fails
+        try{
+          const text=await file.text();
+          // Strip non-printable characters for .doc files
+          const cleaned=text.replace(/[^\x20-\x7E\n\r\t]/g," ").replace(/\s+/g," ").trim();
+          if(cleaned.length>50){
+            setRawText(cleaned);
+            setMode("text");
+            setImagePreview(null);
+          } else {
+            setError("Could not read this Word file. Please try saving it as .docx and uploading again, or use Paste Text instead.");
+          }
+        }catch(e2){
+          setError("Could not read Word file. Please use Paste Text instead.");
+        }
+      }
       return;
     }
     // Image — show preview

@@ -1582,60 +1582,90 @@ function BulkImport({currentUser,agents,saveCustomer}){
     return res.value;
   };
 
-  const extractFromText=(t)=>{
-    const g=(patterns)=>{for(const p of patterns){const m=t.match(p);if(m&&m[1]&&m[1].trim())return m[1].trim();}return "";};
-    const gDate=(patterns)=>{const raw=g(patterns);if(!raw)return "";const m=raw.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);if(m){const day=m[1].padStart(2,"0");const mon=m[2].padStart(2,"0");const yr=m[3].length===2?"20"+m[3]:m[3];return `${yr}-${mon}-${day}`;}return raw;};
-    const gNum=(patterns)=>{const raw=g(patterns);return raw.replace(/[^\d.]/g,"");};
+  const extractFromText=(rawText)=>{
+    const lines=rawText.split(/\n/).map(l=>l.trim()).filter(l=>l.length>0);
+    const after=(label,skip=[])=>{
+      const lbl=label.toLowerCase();
+      for(let i=0;i<lines.length;i++){
+        if(lines[i].toLowerCase().includes(lbl)){
+          for(let j=i+1;j<Math.min(i+5,lines.length);j++){
+            const v=lines[j].trim();
+            if(v&&!skip.some(s=>v.toLowerCase().includes(s.toLowerCase()))&&v.toLowerCase()!==lbl){return v;}
+          }
+        }
+      }
+      return "";
+    };
+    const cleanNum=v=>v.replace(/\s+/g,"");
+    const normDate=v=>{if(!v)return "";const m=v.match(/(\d{1,2})[\-\/\.](\d{1,2})[\-\/\.](\d{2,4})/);if(m){const d=m[1].padStart(2,"0"),mo=m[2].padStart(2,"0"),y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${mo}-${d}`;}return v;};
+    const emailMatch=rawText.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
+    const email=emailMatch?emailMatch[1]:"";
+    const remarksRaw=after("REMARKS",["CHECKED","MANAGER","EDITOR"]);
+    const remarks=remarksRaw.replace(/Email:?\s*[^\s]+/gi,"").trim();
+    const pmRaw=after("PAYMENT METHOD")||after("BILL PAYMENT");
+    const pm=(pmRaw.toLowerCase().includes("d/d")||pmRaw.toLowerCase().includes("direct"))?"Direct Debit":"Cash / Cheque";
     const suppliers=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
-    const gSupplier=(hint)=>{const area=hint?t.slice(Math.max(0,t.toLowerCase().indexOf(hint.toLowerCase()))):t;for(const s of suppliers){if(area.toLowerCase().includes(s.toLowerCase()))return s;}return "";};
+    const offeredLine=lines.find(l=>l.toLowerCase().includes("offered rate"))||"";
+    const elecSupplier=suppliers.find(s=>offeredLine.toLowerCase().includes(s.toLowerCase()))||after("CURRENT SUPPLIER")||"";
+    const supplyNos=lines.filter(l=>/^S[\s\d]{5,}/.test(l)||/S\s*\d{2}\s*\d{3}/.test(l));
+    const elec1SupplyNo=supplyNos[0]?cleanNum(supplyNos[0]):"";
+    const elec2SupplyNo=supplyNos[1]?cleanNum(supplyNos[1]):"";
+    const ratesLine=lines.find(l=>/\d+\.\d+/.test(l))||"";
+    const rateNums=ratesLine.match(/\d+\.?\d*/g)||[];
     return {
-      businessName:    g([/business[\s\w]*?:\s*(.+)/i,/company[\s\w]*?:\s*(.+)/i]),
-      contactPersonName:g([/contact[\s\w]*?:\s*(.+)/i,/name[\s\w]*?:\s*(.+)/i]),
-      telephoneNo:     g([/tel(?:ephone)?[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
-      mobileNo:        g([/mob(?:ile)?[\s\w]*?:\s*(07[\d\s]{9,})/i,/(07\d{3}[\s\-]?\d{6})/]),
-      landlineNo:      g([/landline[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
-      email:           g([/email[\s\w]*?:\s*([^\s]+@[^\s]+)/i,/e-?mail[\s:]*([^\s]+@[^\s]+)/i]),
-      supplyAddress:   g([/address[\s\w]*?:\s*(.+)/i,/supply address[\s\w]*?:\s*(.+)/i]),
-      postcode:        g([/postcode[\s\w]*?:\s*([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})/i,/([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b/i]),
-      commercialRes:   t.toLowerCase().includes("resident")?"Residential":"Commercial",
-      companyRegNo:    g([/reg(?:istration)?[\s\w]*?(?:no|number)?[\s:]*([A-Z0-9]{6,10})/i]),
-      elec1Supplier:   gSupplier("mpan")||gSupplier("electric")||"",
-      elec1SupplyNo:   g([/mpan[\s\w]*?:\s*([\d\s]{10,})/i]),
-      elec1OfferRate:  gNum([/elec[\w\s]*?rate[\s:]*(\d+\.?\d*)/i,/unit\s*rate[\s:]*(\d+\.?\d*)/i]),
-      elec1SCharge:    gNum([/standing[\w\s]*?charge[\s:]*(\d+\.?\d*)/i]),
-      elec1Day:        gNum([/day[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-      elec1Night:      gNum([/night[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-      elec1EveWend:    gNum([/eve[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-      elec1ContractTerm:g([/contract\s*term[\s:]*(\d+\s*year)/i]),
-      elec1NameOnBill: g([/name\s*on\s*(?:elec)?\s*bill[\s:]*(.+)/i]),
-      elec1ContractEnd:gDate([/contract\s*end[\s\w]*?:\s*([\d\/\-\.]+)/i,/end\s*date[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-      elec1MeterSerial:g([/meter[\w\s]*?serial[\s:]*([A-Z0-9]+)/i,/msn[\s:]*([A-Z0-9]+)/i]),
-      elec1AnnualConsumption:gNum([/annual[\w\s]*?(?:elec|consumption)[\s:]*(\d+)/i]),
-      elec2Supplier:"",elec2SupplyNo:"",elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
-      gas1Supplier:    gSupplier("mprn")||gSupplier("gas")||"",
-      gas1MPRN:        g([/mprn[\s\w]*?:\s*([\d\s]{10,})/i]),
-      gas1UnitRate:    gNum([/gas[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-      gas1OfferedSCharge:gNum([/gas[\w\s]*?standing[\s:]*(\d+\.?\d*)/i]),
-      gas1AQ:          gNum([/(?:aq|annual\s*quantity)[\s:]*(\d+)/i]),
-      gas1ContractEnd: gDate([/gas[\w\s]*?end[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-      gas1ContractStart:gDate([/gas[\w\s]*?start[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-      gas1ContractTerm:g([/gas[\w\s]*?term[\s:]*(\d+\s*year)/i]),
-      gas1SiteNoBG:    g([/site\s*no[\s:]*([A-Z0-9]+)/i]),
-      gas1NameOnBill:  g([/name\s*on\s*gas\s*bill[\s:]*(.+)/i]),
-      gas1MeterRead:   gNum([/meter\s*read(?:ing)?[\s:]*(\d+)/i]),
-      gas1MeterSerial: g([/gas[\w\s]*?serial[\s:]*([A-Z0-9]+)/i]),
+      agentName:after("AGENT NAME"),
+      date:normDate(after("DATE")),
+      businessName:after("BUSINESS NAME"),
+      contactPersonName:after("CONTACT PERSON NAME",["MOBILE","SUPPLY"]),
+      telephoneNo:after("LAND LINE"),
+      mobileNo:after("MOBILE NO",["SUPPLY ADDRESS"]),
+      landlineNo:after("LAND LINE"),
+      email:email,
+      supplyAddress:after("SUPPLY ADDRESS",["POSTCODE"]),
+      postcode:after("POSTCODE"),
+      commercialRes:after("COMMERCIAL",["CONTRACT TERM"])||"Commercial",
+      companyRegNo:after("COMPANY REGISTRATION"),
+      elec1Supplier:elecSupplier,
+      elec1SupplyNo:elec1SupplyNo,
+      elec1OfferRate:rateNums[1]||"",
+      elec1SCharge:rateNums[0]||"",
+      elec1Day:rateNums[2]||"",
+      elec1Night:rateNums[3]||"",
+      elec1EveWend:rateNums[4]||"",
+      elec1ContractTerm:after("CONTRACT TERM"),
+      elec1ContractEnd:normDate(after("Contract End Date")),
+      elec1ContractStart:normDate(after("Contract Start Date")),
+      elec1NameOnBill:after("NAME APPEAR ON BILL"),
+      elec1AnnualConsumption:after("ANNUAL CONSUMPTION")||after("EAC"),
+      elec1MeterSerial:after("METER SERIAL NO"),
+      elec1MeterRead:after("CURRENT METER READ"),
+      elec2Supplier:"",elec2SupplyNo:elec2SupplyNo,elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
+      gas1Supplier:after("GAS SUPPLIER")||after("CURRENT GAS SUPPLIER"),
+      gas1MPRN:after("MPRN"),
+      gas1UnitRate:after("GAS UNIT RATE")||after("GAS RATE"),
+      gas1OfferedSCharge:after("GAS STANDING"),
+      gas1AQ:after("AQ")||after("ANNUAL QUANTITY"),
+      gas1ContractEnd:normDate(after("GAS CONTRACT END")||after("GAS END DATE")),
+      gas1ContractStart:normDate(after("GAS CONTRACT START")||after("GAS START DATE")),
+      gas1ContractTerm:after("GAS CONTRACT TERM")||after("GAS TERM"),
+      gas1SiteNoBG:after("SITE NO"),
+      gas1NameOnBill:after("GAS NAME ON BILL"),
+      gas1MeterRead:after("GAS METER READ"),
+      gas1MeterSerial:after("GAS METER SERIAL"),
       gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
-      bankName:        g([/bank[\s\w]*?(?:name)?[\s:]+([A-Za-z\s]+?)(?:\n|sort|$)/i]),
-      accountTitle:    g([/account[\s\w]*?(?:title|name)[\s:]*(.+)/i]),
-      branchAddress:   g([/branch[\s\w]*?address[\s:]*(.+)/i]),
-      sortCode:        g([/sort[\s\w]*?code[\s:]*(\d{2}[\s\-]\d{2}[\s\-]\d{2})/i,/(\d{2}[\-]\d{2}[\-]\d{2})/]),
-      accountNo:       g([/account[\s\w]*?(?:no|number)[\s:]*(\d{6,10})/i]),
-      billPaymentMethod:t.toLowerCase().includes("prepay")?"Cash / Cheque":"Direct Debit",
-      landlordName:    g([/landlord[\s\w]*?(?:name)?[\s:]*(.+)/i]),
-      directorsHomeAddress:g([/director[\s\w]*?address[\s:]*(.+)/i]),
-      directorsDOB:    gDate([/(?:dob|date\s*of\s*birth)[\s:]*?([\d\/\-\.]+)/i]),
-      nameOfNewCustomer:g([/new\s*customer[\s:]*(.+)/i]),
-      remarks:         g([/remarks?[\s:]*(.+)/i,/notes?[\s:]*(.+)/i]),
+      bankName:after("BANK NAME"),
+      accountTitle:after("ACCOUNT TITLE"),
+      branchAddress:after("BRANCH ADDRESS"),
+      sortCode:cleanNum(after("SORT CODE")),
+      accountNo:cleanNum(after("ACCOUNT  NO")||after("ACCOUNT NO")),
+      billPaymentMethod:pm,
+      landlordName:after("LANDLORD NAME"),
+      directorsHomeAddress:after("DIRECTORS HOME ADDRESS"),
+      directorsDOB:normDate(after("DATE OF BIRTH")),
+      nameOfNewCustomer:after("NAME OF NEW CUSTOMER"),
+      remarks:remarks,
+      checkedByManager:after("CHECKED BY",["MANAGER","EDITOR"]),
+      checkedByEditor:"",
       renewalStatus:"Not Due",
     };
   };

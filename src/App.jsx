@@ -1211,28 +1211,57 @@ function AIImport({currentUser,agents,isManager,onSave}){
     }
     if(file.name.match(/\.(docx|doc)$/i)){
       try{
-        const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
-        const buf=await file.arrayBuffer();
-        const res=await mammoth.extractRawText({arrayBuffer:buf});
-        setRawText(res.value);
-        setMode("text");
-        setImagePreview(null);
-      }catch(e){
-        // Fallback: read as plain text if mammoth fails
-        try{
-          const text=await file.text();
-          // Strip non-printable characters for .doc files
-          const cleaned=text.replace(/[^\x20-\x7E\n\r\t]/g," ").replace(/\s+/g," ").trim();
-          if(cleaned.length>50){
-            setRawText(cleaned);
+        // Try mammoth for .docx files
+        if(file.name.match(/\.docx$/i)){
+          const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
+          const buf=await file.arrayBuffer();
+          const res=await mammoth.extractRawText({arrayBuffer:buf});
+          if(res.value&&res.value.trim().length>20){
+            setRawText(res.value);
             setMode("text");
             setImagePreview(null);
-          } else {
-            setError("Could not read this Word file. Please try saving it as .docx and uploading again, or use Paste Text instead.");
+            return;
           }
-        }catch(e2){
-          setError("Could not read Word file. Please use Paste Text instead.");
         }
+        // For .doc files — extract readable text by scanning binary for strings
+        const buf=await file.arrayBuffer();
+        const bytes=new Uint8Array(buf);
+        let text="";
+        let i=0;
+        while(i<bytes.length){
+          // Look for sequences of printable ASCII or UTF-16LE characters
+          if(bytes[i]>=32&&bytes[i]<127){
+            let word="";
+            while(i<bytes.length&&bytes[i]>=32&&bytes[i]<127){
+              word+=String.fromCharCode(bytes[i]);
+              i++;
+            }
+            if(word.length>3)text+=word+" ";
+          } else if(bytes[i]>=32&&bytes[i]<127&&bytes[i+1]===0){
+            // UTF-16LE
+            let word="";
+            while(i<bytes.length&&bytes[i]>=32&&bytes[i]<127&&bytes[i+1]===0){
+              word+=String.fromCharCode(bytes[i]);
+              i+=2;
+            }
+            if(word.length>3)text+=word+" ";
+          } else { i++; }
+        }
+        // Clean up extracted text
+        const cleaned=text
+          .replace(/[^a-zA-Z0-9\s\:\.\,\-\/\@\&\(\)\+]/g," ")
+          .replace(/\s+/g," ")
+          .trim();
+        if(cleaned.length>100){
+          setRawText(cleaned);
+          setMode("text");
+          setImagePreview(null);
+        } else {
+          // Last resort — ask user to take a photo
+          setError("This .doc file format is hard to read directly. 3 easy options: 1) Take a photo of the printed sheet and upload that, 2) Open in Word → Save As .docx → upload the .docx, or 3) Copy-paste the text using the Paste Text tab.");
+        }
+      }catch(e){
+        setError("Could not read this file. Try: Photo upload, save as .docx, or Paste Text tab.");
       }
       return;
     }
@@ -1419,7 +1448,7 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
       {mode==="image"&&(
         <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
           <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:8}}>📷 Upload Your Contact Sheet</div>
-          <div style={{color:S.muted,fontSize:12,marginBottom:16}}>Take a photo of your paper sheet with your phone, or scan it — then upload here. Works with any angle or lighting.</div>
+          <div style={{color:S.muted,fontSize:12,marginBottom:16}}>Upload a photo, scan, Word file or Excel sheet — AI extracts all the data automatically.</div>
 
           {/* Drop zone */}
           <div
@@ -1452,7 +1481,16 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
           </div>
           <input ref={fileRef} type="file" accept="image/*,.pdf,.docx,.doc,.xlsx,.xls" onChange={handleImageChange} style={{display:"none"}}/>
 
-          {error&&<div style={{color:S.danger,fontSize:13,marginTop:12}}>⚠️ {error}</div>}
+          {error&&(
+            <div style={{background:S.dangerGlow,border:`1px solid ${S.danger}40`,borderRadius:10,padding:"14px 16px",marginTop:12}}>
+              <div style={{color:S.danger,fontWeight:700,fontSize:13,marginBottom:8}}>⚠️ Could not read file</div>
+              <div style={{color:S.off,fontSize:13,lineHeight:1.7}}>{error}</div>
+              <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
+                <button onClick={()=>{setMode("text");setError("");}} style={{background:S.teal,color:S.navy,border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📋 Switch to Paste Text</button>
+                <button onClick={()=>{setError("");setImageFile(null);setImagePreview(null);fileRef.current?.click();}} style={{background:S.cardL,color:S.white,border:`1px solid ${S.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📷 Upload Photo Instead</button>
+              </div>
+            </div>
+          )}
           <div style={{marginTop:16,display:"flex",gap:10}}>
             <Btn color={S.teal} onClick={handleExtractImage} disabled={loading||!imageFile}>
               {loading?"🤖 Reading sheet…":"🤖 Extract Data from Image"}
@@ -1526,6 +1564,234 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
 }
 
 // ═══════════════════════════════════════════════════════════
+//  BULK IMPORT
+// ═══════════════════════════════════════════════════════════
+function BulkImport({currentUser,agents,saveCustomer}){
+  const [files,setFiles]=useState([]);
+  const [processing,setProcessing]=useState(false);
+  const [results,setResults]=useState([]);
+  const [current,setCurrent]=useState(null);
+  const [done,setDone]=useState(false);
+  const fileRef=useRef(null);
+  const dropRef=useRef(null);
+
+  const readDocx=async(file)=>{
+    const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
+    const buf=await file.arrayBuffer();
+    const res=await mammoth.extractRawText({arrayBuffer:buf});
+    return res.value;
+  };
+
+  const extractFromText=(t)=>{
+    const g=(patterns)=>{for(const p of patterns){const m=t.match(p);if(m&&m[1]&&m[1].trim())return m[1].trim();}return "";};
+    const gDate=(patterns)=>{const raw=g(patterns);if(!raw)return "";const m=raw.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);if(m){const day=m[1].padStart(2,"0");const mon=m[2].padStart(2,"0");const yr=m[3].length===2?"20"+m[3]:m[3];return `${yr}-${mon}-${day}`;}return raw;};
+    const gNum=(patterns)=>{const raw=g(patterns);return raw.replace(/[^\d.]/g,"");};
+    const suppliers=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
+    const gSupplier=(hint)=>{const area=hint?t.slice(Math.max(0,t.toLowerCase().indexOf(hint.toLowerCase()))):t;for(const s of suppliers){if(area.toLowerCase().includes(s.toLowerCase()))return s;}return "";};
+    return {
+      businessName:    g([/business[\s\w]*?:\s*(.+)/i,/company[\s\w]*?:\s*(.+)/i]),
+      contactPersonName:g([/contact[\s\w]*?:\s*(.+)/i,/name[\s\w]*?:\s*(.+)/i]),
+      telephoneNo:     g([/tel(?:ephone)?[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
+      mobileNo:        g([/mob(?:ile)?[\s\w]*?:\s*(07[\d\s]{9,})/i,/(07\d{3}[\s\-]?\d{6})/]),
+      landlineNo:      g([/landline[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
+      email:           g([/email[\s\w]*?:\s*([^\s]+@[^\s]+)/i,/e-?mail[\s:]*([^\s]+@[^\s]+)/i]),
+      supplyAddress:   g([/address[\s\w]*?:\s*(.+)/i,/supply address[\s\w]*?:\s*(.+)/i]),
+      postcode:        g([/postcode[\s\w]*?:\s*([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})/i,/([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b/i]),
+      commercialRes:   t.toLowerCase().includes("resident")?"Residential":"Commercial",
+      companyRegNo:    g([/reg(?:istration)?[\s\w]*?(?:no|number)?[\s:]*([A-Z0-9]{6,10})/i]),
+      elec1Supplier:   gSupplier("mpan")||gSupplier("electric")||"",
+      elec1SupplyNo:   g([/mpan[\s\w]*?:\s*([\d\s]{10,})/i]),
+      elec1OfferRate:  gNum([/elec[\w\s]*?rate[\s:]*(\d+\.?\d*)/i,/unit\s*rate[\s:]*(\d+\.?\d*)/i]),
+      elec1SCharge:    gNum([/standing[\w\s]*?charge[\s:]*(\d+\.?\d*)/i]),
+      elec1Day:        gNum([/day[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+      elec1Night:      gNum([/night[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+      elec1EveWend:    gNum([/eve[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+      elec1ContractTerm:g([/contract\s*term[\s:]*(\d+\s*year)/i]),
+      elec1NameOnBill: g([/name\s*on\s*(?:elec)?\s*bill[\s:]*(.+)/i]),
+      elec1ContractEnd:gDate([/contract\s*end[\s\w]*?:\s*([\d\/\-\.]+)/i,/end\s*date[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+      elec1MeterSerial:g([/meter[\w\s]*?serial[\s:]*([A-Z0-9]+)/i,/msn[\s:]*([A-Z0-9]+)/i]),
+      elec1AnnualConsumption:gNum([/annual[\w\s]*?(?:elec|consumption)[\s:]*(\d+)/i]),
+      elec2Supplier:"",elec2SupplyNo:"",elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
+      gas1Supplier:    gSupplier("mprn")||gSupplier("gas")||"",
+      gas1MPRN:        g([/mprn[\s\w]*?:\s*([\d\s]{10,})/i]),
+      gas1UnitRate:    gNum([/gas[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
+      gas1OfferedSCharge:gNum([/gas[\w\s]*?standing[\s:]*(\d+\.?\d*)/i]),
+      gas1AQ:          gNum([/(?:aq|annual\s*quantity)[\s:]*(\d+)/i]),
+      gas1ContractEnd: gDate([/gas[\w\s]*?end[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+      gas1ContractStart:gDate([/gas[\w\s]*?start[\s\w]*?:\s*([\d\/\-\.]+)/i]),
+      gas1ContractTerm:g([/gas[\w\s]*?term[\s:]*(\d+\s*year)/i]),
+      gas1SiteNoBG:    g([/site\s*no[\s:]*([A-Z0-9]+)/i]),
+      gas1NameOnBill:  g([/name\s*on\s*gas\s*bill[\s:]*(.+)/i]),
+      gas1MeterRead:   gNum([/meter\s*read(?:ing)?[\s:]*(\d+)/i]),
+      gas1MeterSerial: g([/gas[\w\s]*?serial[\s:]*([A-Z0-9]+)/i]),
+      gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
+      bankName:        g([/bank[\s\w]*?(?:name)?[\s:]+([A-Za-z\s]+?)(?:\n|sort|$)/i]),
+      accountTitle:    g([/account[\s\w]*?(?:title|name)[\s:]*(.+)/i]),
+      branchAddress:   g([/branch[\s\w]*?address[\s:]*(.+)/i]),
+      sortCode:        g([/sort[\s\w]*?code[\s:]*(\d{2}[\s\-]\d{2}[\s\-]\d{2})/i,/(\d{2}[\-]\d{2}[\-]\d{2})/]),
+      accountNo:       g([/account[\s\w]*?(?:no|number)[\s:]*(\d{6,10})/i]),
+      billPaymentMethod:t.toLowerCase().includes("prepay")?"Cash / Cheque":"Direct Debit",
+      landlordName:    g([/landlord[\s\w]*?(?:name)?[\s:]*(.+)/i]),
+      directorsHomeAddress:g([/director[\s\w]*?address[\s:]*(.+)/i]),
+      directorsDOB:    gDate([/(?:dob|date\s*of\s*birth)[\s:]*?([\d\/\-\.]+)/i]),
+      nameOfNewCustomer:g([/new\s*customer[\s:]*(.+)/i]),
+      remarks:         g([/remarks?[\s:]*(.+)/i,/notes?[\s:]*(.+)/i]),
+      renewalStatus:"Not Due",
+    };
+  };
+
+  const handleFiles=e=>{
+    const picked=Array.from(e.target.files).filter(f=>f.name.match(/\.(docx)$/i));
+    setFiles(picked);setResults([]);setDone(false);
+  };
+
+  const handleDrop=e=>{
+    e.preventDefault();
+    const dropped=Array.from(e.dataTransfer.files).filter(f=>f.name.match(/\.(docx)$/i));
+    setFiles(dropped);setResults([]);setDone(false);
+  };
+
+  const handleDragOver=e=>e.preventDefault();
+
+  const runImport=async()=>{
+    if(!files.length)return;
+    setProcessing(true);setResults([]);setDone(false);
+    const res=[];
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setCurrent({name:file.name,idx:i,total:files.length});
+      try{
+        const text=await readDocx(file);
+        const data=extractFromText(text);
+        const agentId=currentUser.id;
+        const agentName=currentUser.name;
+        const customer={
+          ...data, id:uid("CUS"), agentId, agentName,
+          date:today(), createdAt:today(),
+          commercialRes:data.commercialRes||"Commercial",
+          billPaymentMethod:data.billPaymentMethod||"Direct Debit",
+          sourceFile:file.name,
+        };
+        await saveCustomer(customer);
+        res.push({name:file.name,status:"success",business:data.businessName||data.contactPersonName||"Unknown",id:customer.id});
+      }catch(e){
+        res.push({name:file.name,status:"error",error:e.message});
+      }
+      setResults([...res]);
+    }
+    setCurrent(null);setProcessing(false);setDone(true);
+  };
+
+  const success=results.filter(r=>r.status==="success").length;
+  const failed =results.filter(r=>r.status==="error").length;
+  const pct=files.length?Math.round((results.length/files.length)*100):0;
+
+  return(
+    <div style={{fontFamily:"Inter,system-ui,sans-serif"}}>
+      <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>📦 Bulk Import</div>
+      <div style={{color:S.muted,fontSize:13,marginBottom:20}}>Select or drag hundreds of <b style={{color:S.teal}}>.docx</b> files at once — the CRM reads each one and saves all contracts to Firebase automatically.</div>
+
+      {/* Drop zone */}
+      {!processing&&!done&&(
+        <div
+          ref={dropRef}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onClick={()=>fileRef.current?.click()}
+          style={{border:`2px dashed ${files.length?S.teal:S.border}`,borderRadius:14,padding:40,textAlign:"center",cursor:"pointer",background:files.length?S.tealGlow:"transparent",marginBottom:20,transition:"all 0.2s"}}
+        >
+          <div style={{fontSize:52,marginBottom:12}}>📂</div>
+          <div style={{color:S.white,fontWeight:700,fontSize:17,marginBottom:6}}>
+            {files.length?`${files.length} file${files.length!==1?"s":""} selected`:"Drag & drop your .docx files here"}
+          </div>
+          <div style={{color:S.muted,fontSize:13,marginBottom:16}}>
+            {files.length?"Click to change selection — or drag more files here":"Or click to browse and select multiple files at once"}
+          </div>
+          {files.length>0&&(
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",maxHeight:120,overflowY:"auto"}}>
+              {files.slice(0,20).map((f,i)=>(
+                <span key={i} style={{background:S.cardL,borderRadius:6,padding:"3px 10px",fontSize:11,color:S.teal}}>{f.name}</span>
+              ))}
+              {files.length>20&&<span style={{background:S.cardL,borderRadius:6,padding:"3px 10px",fontSize:11,color:S.muted}}>+{files.length-20} more…</span>}
+            </div>
+          )}
+          <input ref={fileRef} type="file" accept=".docx" multiple onChange={handleFiles} style={{display:"none"}}/>
+        </div>
+      )}
+
+      {/* Info banner */}
+      {!processing&&!done&&files.length>0&&(
+        <div style={{background:S.amberGlow,border:`1px solid ${S.amber}40`,borderRadius:12,padding:"14px 18px",marginBottom:20,fontSize:13,color:S.off}}>
+          <span style={{color:S.amber,fontWeight:700}}>⚠️ Note: </span>
+          Only <b>.docx</b> files are supported for bulk import. Old <b>.doc</b> files need to be opened in Word and saved as .docx first. You can do this in bulk using Word's batch save feature.
+        </div>
+      )}
+
+      {/* Start button */}
+      {!processing&&!done&&files.length>0&&(
+        <Btn color={S.teal} onClick={runImport}>
+          🚀 Start Bulk Import — {files.length} file{files.length!==1?"s":""}
+        </Btn>
+      )}
+
+      {/* Progress */}
+      {processing&&current&&(
+        <div style={{background:S.card,borderRadius:14,padding:24,marginBottom:20,border:`1px solid ${S.border}`}}>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>⏳ Importing… {current.idx+1} of {current.total}</div>
+          <div style={{color:S.muted,fontSize:13,marginBottom:16}}>Reading: <span style={{color:S.teal}}>{current.name}</span></div>
+          {/* Progress bar */}
+          <div style={{background:S.cardL,borderRadius:999,height:10,overflow:"hidden",marginBottom:8}}>
+            <div style={{background:`linear-gradient(90deg,${S.teal},${S.tealD})`,height:"100%",width:`${pct}%`,transition:"width 0.3s",borderRadius:999}}/>
+          </div>
+          <div style={{color:S.muted,fontSize:12}}>{pct}% complete · {success} saved · {failed} failed</div>
+        </div>
+      )}
+
+      {/* Results */}
+      {results.length>0&&(
+        <div style={{background:S.card,borderRadius:14,padding:24,border:`1px solid ${S.border}`}}>
+          {done&&(
+            <div style={{display:"flex",gap:16,marginBottom:20,flexWrap:"wrap"}}>
+              <div style={{background:S.greenGlow,border:`1px solid ${S.green}40`,borderRadius:10,padding:"12px 20px",textAlign:"center"}}>
+                <div style={{fontSize:28,fontWeight:800,color:S.green}}>{success}</div>
+                <div style={{color:S.muted,fontSize:12}}>Successfully Imported</div>
+              </div>
+              <div style={{background:S.dangerGlow,border:`1px solid ${S.danger}40`,borderRadius:10,padding:"12px 20px",textAlign:"center"}}>
+                <div style={{fontSize:28,fontWeight:800,color:S.danger}}>{failed}</div>
+                <div style={{color:S.muted,fontSize:12}}>Failed</div>
+              </div>
+              <div style={{background:S.tealGlow,border:`1px solid ${S.teal}40`,borderRadius:10,padding:"12px 20px",textAlign:"center"}}>
+                <div style={{fontSize:28,fontWeight:800,color:S.teal}}>{files.length}</div>
+                <div style={{color:S.muted,fontSize:12}}>Total Files</div>
+              </div>
+            </div>
+          )}
+
+          <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:S.mutedL}}>Import Results</div>
+          <div style={{maxHeight:300,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
+            {results.map((r,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:r.status==="success"?S.greenGlow:S.dangerGlow,borderRadius:8,border:`1px solid ${r.status==="success"?S.green:S.danger}30`}}>
+                <span style={{fontSize:16}}>{r.status==="success"?"✅":"❌"}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:S.off}}>{r.status==="success"?r.business:r.name}</div>
+                  <div style={{fontSize:11,color:S.muted}}>{r.status==="success"?`${r.name} · ID: ${r.id}`:r.error}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {done&&(
+            <div style={{marginTop:16,display:"flex",gap:10}}>
+              <Btn color={S.teal} onClick={()=>{setFiles([]);setResults([]);setDone(false);}}>📦 Import More Files</Btn>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  ROOT APP
 // ═══════════════════════════════════════════════════════════
 export default function App(){
@@ -1577,7 +1843,11 @@ export default function App(){
     {id:"dashboard",label:"📊 Dashboard"},
     {id:"contracts",label:"📋 Contracts"},
     {id:"import",label:"🤖 AI Import"},
-    ...(isManager?[{id:"agents",label:"👥 Agents"},{id:"analytics",label:"📈 Analytics"}]:[]),
+    ...(isManager?[
+      {id:"bulk",label:"📦 Bulk Import"},
+      {id:"agents",label:"👥 Agents"},
+      {id:"analytics",label:"📈 Analytics"},
+    ]:[]),
   ];
 
   return(
@@ -1699,6 +1969,8 @@ export default function App(){
         })()}
 
         {view==="import"&&<AIImport currentUser={currentUser} agents={agents} isManager={isManager} onSave={async(c)=>{await saveCustomer(c);setView("contracts");}}/>}
+
+        {view==="bulk"&&isManager&&<BulkImport currentUser={currentUser} agents={agents} saveCustomer={saveCustomer}/>}
 
         {view==="agents"&&isManager&&<AgentManagement users={users} saveUser={saveUser} delUser={delUser}/>}
 

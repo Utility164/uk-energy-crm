@@ -27,6 +27,11 @@ const FIREBASE_CONFIG = {
 const IS_CONFIGURED = FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
 
 // ═══════════════════════════════════════════════════════════
+//  CLOUDCONVERT API KEY — .doc/.docx conversion for all devices
+// ═══════════════════════════════════════════════════════════
+const CLOUDCONVERT_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiYzRhZGNkYmZlODE1N2YzZTZlZDc2OTVkMTE3OTFmMThhMmJmMWJiMTE1ZmZmM2M3NWJkNzE1NWJhMDVlMzg0ODBkOTU1YTBmMmE4Y2JkMGUiLCJpYXQiOjE3ODg3ODAxMjIuODczMTUyLCJuYmYiOjE3ODg3ODAxMjIuODczMTUzLCJleHAiOjQ5NDQ0NTM3MjIuODY0OTA3LCJzdWIiOiI3Njg3ODg1MyIsInNjb3BlcyI6WyJ1c2VyLnJlYWQiLCJ0YXNrLnJlYWQiLCJ0YXNrLndyaXRlIl19.P4E5CZNKfqWcWdc3f9Nj-n3ytNZnud3IfsQciHV2WqaT_5H7GGDMbvNNPRBYkEvuVQ-cTEbsTcvYxdWb6R5dYPMuolwc1dQGphwWqyc6L0nj0IpSkMu-2looQCA2aDW7bU8Q2qui90Dszq_Ljzh5egbyFmi45OXRhtpi2wRKOaBhvSNQfTQjpBmgj7oznMqAn9dq0n0FYhbv8jl3DML97AMSEhFgTXWPiMiWVJtzh3vIY2LQxa1yEDrQ9yi_262g4cYkRbTSMrpPiww46EoGcaOqoIDLUT5hOH1zbD1YW18ihEAn4Mo-KhNVfIcl2v-1d3Ils99jmTLGcxf30K49IYQNsvHY066NCwWtzEeDVDJe_Sw0yfPZMNLqaxdmDfr-8epl1nlYC0Icxh91q0fBaWJ-3adgn0DLnAqlMzBZwv-eKwZwEAAsO23MGQSDQRGqKktTOx89ThhINOEL2GwyzOYs3EDowOvXvpyceoHvzEba-U7UnTrIxVvbrmyIigy0mA7Vaibw3kG33gS2taNcOTa735kIBR49xreqn9kyTswQ9vI3Hnmd-kcqUvo8bIPPWpYgoBanV5gjSpwq74biZE3avbXR1a1AfGijjPzl6XPYCLtFpoiFgHee5IDq0TXXNB-gs6e7zchRPRmFCIrRp37pLE8PQaPOz3N30oipWk8";
+
+// ═══════════════════════════════════════════════════════════
 //  DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════
 const S = {
@@ -1211,57 +1216,75 @@ function AIImport({currentUser,agents,isManager,onSave}){
     }
     if(file.name.match(/\.(docx|doc)$/i)){
       try{
-        // Try mammoth for .docx files
+        setLoading(true);
+
+        // Step 1 — Try mammoth for .docx first (fast, no API needed)
         if(file.name.match(/\.docx$/i)){
-          const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
-          const buf=await file.arrayBuffer();
-          const res=await mammoth.extractRawText({arrayBuffer:buf});
-          if(res.value&&res.value.trim().length>20){
-            setRawText(res.value);
-            setMode("text");
-            setImagePreview(null);
-            return;
+          try{
+            const mammoth=await import("https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.esm.js");
+            const buf=await file.arrayBuffer();
+            const res=await mammoth.extractRawText({arrayBuffer:buf});
+            if(res.value&&res.value.trim().length>20){
+              setRawText(res.value);
+              setMode("text");
+              setImagePreview(null);
+              setLoading(false);
+              return;
+            }
+          }catch(e){}
+        }
+
+        // Step 2 — Use CloudConvert for both .doc and .docx fallback
+        // Create a job: upload → convert doc→txt → export
+        const jobResp = await fetch("https://api.cloudconvert.com/v2/jobs",{
+          method:"POST",
+          headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`,"Content-Type":"application/json"},
+          body:JSON.stringify({
+            tasks:{
+              "upload-file":   {operation:"import/upload"},
+              "convert-file":  {operation:"convert", input:"upload-file", output_format:"txt", input_format: file.name.endsWith(".doc")?"doc":"docx"},
+              "export-result": {operation:"export/url", input:"convert-file"},
+            }
+          })
+        });
+        const job=await jobResp.json();
+        const uploadTask=job.data.tasks.find(t=>t.name==="upload-file");
+
+        // Step 3 — Upload the file to CloudConvert
+        const formData=new FormData();
+        Object.entries(uploadTask.result.form.parameters).forEach(([k,v])=>formData.append(k,v));
+        formData.append("file",file);
+        await fetch(uploadTask.result.form.url,{method:"POST",body:formData});
+
+        // Step 4 — Wait for conversion to complete (poll every second)
+        let exportUrl="";
+        for(let i=0;i<30;i++){
+          await new Promise(r=>setTimeout(r,1500));
+          const statusResp=await fetch(`https://api.cloudconvert.com/v2/jobs/${job.data.id}`,{
+            headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`}
+          });
+          const status=await statusResp.json();
+          const exportTask=status.data.tasks.find(t=>t.name==="export-result");
+          if(exportTask?.status==="finished"){
+            exportUrl=exportTask.result.files[0].url;
+            break;
           }
+          if(status.data.status==="error") throw new Error("Conversion failed on CloudConvert");
         }
-        // For .doc files — extract readable text by scanning binary for strings
-        const buf=await file.arrayBuffer();
-        const bytes=new Uint8Array(buf);
-        let text="";
-        let i=0;
-        while(i<bytes.length){
-          // Look for sequences of printable ASCII or UTF-16LE characters
-          if(bytes[i]>=32&&bytes[i]<127){
-            let word="";
-            while(i<bytes.length&&bytes[i]>=32&&bytes[i]<127){
-              word+=String.fromCharCode(bytes[i]);
-              i++;
-            }
-            if(word.length>3)text+=word+" ";
-          } else if(bytes[i]>=32&&bytes[i]<127&&bytes[i+1]===0){
-            // UTF-16LE
-            let word="";
-            while(i<bytes.length&&bytes[i]>=32&&bytes[i]<127&&bytes[i+1]===0){
-              word+=String.fromCharCode(bytes[i]);
-              i+=2;
-            }
-            if(word.length>3)text+=word+" ";
-          } else { i++; }
-        }
-        // Clean up extracted text
-        const cleaned=text
-          .replace(/[^a-zA-Z0-9\s\:\.\,\-\/\@\&\(\)\+]/g," ")
-          .replace(/\s+/g," ")
-          .trim();
-        if(cleaned.length>100){
-          setRawText(cleaned);
-          setMode("text");
-          setImagePreview(null);
-        } else {
-          // Last resort — ask user to take a photo
-          setError("This .doc file format is hard to read directly. 3 easy options: 1) Take a photo of the printed sheet and upload that, 2) Open in Word → Save As .docx → upload the .docx, or 3) Copy-paste the text using the Paste Text tab.");
-        }
+
+        if(!exportUrl) throw new Error("Conversion timed out");
+
+        // Step 5 — Download the converted text
+        const txtResp=await fetch(exportUrl);
+        const text=await txtResp.text();
+        setRawText(text);
+        setMode("text");
+        setImagePreview(null);
+        setLoading(false);
+
       }catch(e){
-        setError("Could not read this file. Try: Photo upload, save as .docx, or Paste Text tab.");
+        setLoading(false);
+        setError("Could not convert file: "+e.message+". Try the Paste Text option instead.");
       }
       return;
     }
@@ -1482,20 +1505,60 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
           <input ref={fileRef} type="file" accept="image/*,.pdf,.docx,.doc,.xlsx,.xls" onChange={handleImageChange} style={{display:"none"}}/>
 
           {error&&(
-            <div style={{background:S.dangerGlow,border:`1px solid ${S.danger}40`,borderRadius:10,padding:"14px 16px",marginTop:12}}>
-              <div style={{color:S.danger,fontWeight:700,fontSize:13,marginBottom:8}}>⚠️ Could not read file</div>
-              <div style={{color:S.off,fontSize:13,lineHeight:1.7}}>{error}</div>
-              <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
-                <button onClick={()=>{setMode("text");setError("");}} style={{background:S.teal,color:S.navy,border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📋 Switch to Paste Text</button>
-                <button onClick={()=>{setError("");setImageFile(null);setImagePreview(null);fileRef.current?.click();}} style={{background:S.cardL,color:S.white,border:`1px solid ${S.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📷 Upload Photo Instead</button>
-              </div>
+            <div style={{background:error==="doc_server"?S.cardL:S.dangerGlow,border:`1px solid ${error==="doc_server"?S.border:S.danger+"40"}`,borderRadius:10,padding:"16px 18px",marginTop:12}}>
+              {error==="doc_server"?(
+                <div>
+                  <div style={{color:S.amber,fontWeight:800,fontSize:14,marginBottom:10}}>⚠️ .doc files need the Converter Tool</div>
+                  <div style={{color:S.off,fontSize:13,lineHeight:1.8,marginBottom:14}}>
+                    Old Word (.doc) files can't be read directly in the browser. You have <b>3 options</b>:
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{background:S.cardLL,borderRadius:8,padding:"12px 14px"}}>
+                      <div style={{color:S.teal,fontWeight:700,fontSize:13,marginBottom:4}}>🏆 Option 1 — Run the Converter Tool (Best)</div>
+                      <div style={{color:S.muted,fontSize:12,lineHeight:1.7}}>
+                        1. Download <b style={{color:S.teal}}>converter_server.py</b> from below<br/>
+                        2. Open Terminal on your Mac<br/>
+                        3. Run: <code style={{background:S.navy,padding:"2px 8px",borderRadius:4,color:S.teal}}>pip3 install flask flask-cors && python3 converter_server.py</code><br/>
+                        4. Keep Terminal open, then upload your .doc file again ✅
+                      </div>
+                    </div>
+                    <div style={{background:S.cardLL,borderRadius:8,padding:"12px 14px"}}>
+                      <div style={{color:S.purple,fontWeight:700,fontSize:13,marginBottom:4}}>📷 Option 2 — Photo of the sheet</div>
+                      <div style={{color:S.muted,fontSize:12}}>Take a photo with your phone → upload the photo instead</div>
+                    </div>
+                    <div style={{background:S.cardLL,borderRadius:8,padding:"12px 14px"}}>
+                      <div style={{color:S.green,fontWeight:700,fontSize:13,marginBottom:4}}>📋 Option 3 — Copy & Paste</div>
+                      <div style={{color:S.muted,fontSize:12}}>Open the .doc in Word → Select All (Cmd+A) → Copy → click Paste Text tab → Paste</div>
+                    </div>
+                  </div>
+                  <div style={{marginTop:14,display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={()=>{setMode("text");setError("");}} style={{background:S.teal,color:S.navy,border:"none",borderRadius:8,padding:"7px 16px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📋 Paste Text Instead</button>
+                    <button onClick={()=>{setError("");setImageFile(null);setImagePreview(null);fileRef.current?.click();}} style={{background:S.cardLL,color:S.white,border:`1px solid ${S.border}`,borderRadius:8,padding:"7px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📷 Upload Photo Instead</button>
+                  </div>
+                </div>
+              ):(
+                <div>
+                  <div style={{color:S.danger,fontWeight:700,fontSize:13,marginBottom:8}}>⚠️ Could not read file</div>
+                  <div style={{color:S.off,fontSize:13,lineHeight:1.7}}>{error}</div>
+                  <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={()=>{setMode("text");setError("");}} style={{background:S.teal,color:S.navy,border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📋 Switch to Paste Text</button>
+                    <button onClick={()=>{setError("");setImageFile(null);setImagePreview(null);fileRef.current?.click();}} style={{background:S.cardL,color:S.white,border:`1px solid ${S.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,system-ui,sans-serif"}}>📷 Upload Photo Instead</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div style={{marginTop:16,display:"flex",gap:10}}>
             <Btn color={S.teal} onClick={handleExtractImage} disabled={loading||!imageFile}>
-              {loading?"🤖 Reading sheet…":"🤖 Extract Data from Image"}
+              {loading
+                ? imageFile?.name?.match(/\.(doc|docx)/i)
+                  ? "⏳ Converting via CloudConvert…"
+                  : "🤖 Reading sheet…"
+                : imageFile?.name?.match(/\.(doc|docx)/i)
+                  ? "📄 Convert & Extract Fields"
+                  : "🤖 Extract Data from Image"}
             </Btn>
-            {imageFile&&<Btn color={S.slate} outline onClick={()=>{setImageFile(null);setImagePreview(null);setResult(null);setError("");}}>Clear</Btn>}
+            {imageFile&&<Btn color={S.slate} outline onClick={()=>{setImageFile(null);setImagePreview(null);setResult(null);setError("");setLoading(false);}}>Clear</Btn>}
           </div>
         </div>
       )}

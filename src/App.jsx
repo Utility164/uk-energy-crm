@@ -1225,10 +1225,16 @@ function AIImport({currentUser,agents,isManager,onSave}){
             const buf=await file.arrayBuffer();
             const res=await mammoth.extractRawText({arrayBuffer:buf});
             if(res.value&&res.value.trim().length>20){
-              setRawText(res.value);
+              const txt=res.value;
+              setRawText(txt);
               setMode("text");
               setImagePreview(null);
               setLoading(false);
+              // Auto-extract fields immediately
+              try{
+                const extracted=extractFromText(txt);
+                setResult(extracted);
+              }catch(e){}
               return;
             }
           }catch(e){}
@@ -1281,6 +1287,11 @@ function AIImport({currentUser,agents,isManager,onSave}){
         setMode("text");
         setImagePreview(null);
         setLoading(false);
+        // Auto-extract fields immediately
+        try{
+          const extracted=extractFromText(text);
+          setResult(extracted);
+        }catch(e){}
 
       }catch(e){
         setLoading(false);
@@ -1549,16 +1560,27 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
             </div>
           )}
           <div style={{marginTop:16,display:"flex",gap:10}}>
-            <Btn color={S.teal} onClick={handleExtractImage} disabled={loading||!imageFile}>
+            <Btn color={S.teal}
+              onClick={()=>{
+                // If it's a doc/docx that switched to text mode — use text extractor
+                if(imageFile?.name?.match(/\.(doc|docx|xlsx|xls)/i)||mode==="text"&&rawText){
+                  handleExtractText();
+                } else {
+                  handleExtractImage();
+                }
+              }}
+              disabled={loading||(!imageFile&&!rawText)}>
               {loading
                 ? imageFile?.name?.match(/\.(doc|docx)/i)
                   ? "⏳ Converting via CloudConvert…"
                   : "🤖 Reading sheet…"
                 : imageFile?.name?.match(/\.(doc|docx)/i)
                   ? "📄 Convert & Extract Fields"
+                  : imageFile?.name?.match(/\.(xlsx|xls)/i)
+                  ? "📊 Extract from Excel"
                   : "🤖 Extract Data from Image"}
             </Btn>
-            {imageFile&&<Btn color={S.slate} outline onClick={()=>{setImageFile(null);setImagePreview(null);setResult(null);setError("");setLoading(false);}}>Clear</Btn>}
+            {imageFile&&<Btn color={S.slate} outline onClick={()=>{setImageFile(null);setImagePreview(null);setResult(null);setError("");setRawText("");setLoading(false);}}>Clear</Btn>}
           </div>
         </div>
       )}

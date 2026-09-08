@@ -1240,45 +1240,57 @@ function AIImport({currentUser,agents,isManager,onSave}){
           }catch(e){}
         }
 
-        // Step 2 — Use CloudConvert for both .doc and .docx fallback
-        // Create a job: upload → convert doc→txt → export
+        // Step 2 — Use CloudConvert for .doc files
         const jobResp = await fetch("https://api.cloudconvert.com/v2/jobs",{
           method:"POST",
           headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`,"Content-Type":"application/json"},
           body:JSON.stringify({
             tasks:{
               "upload-file":   {operation:"import/upload"},
-              "convert-file":  {operation:"convert", input:"upload-file", output_format:"txt", input_format: file.name.endsWith(".doc")?"doc":"docx"},
+              "convert-file":  {operation:"convert", input:"upload-file", output_format:"txt"},
               "export-result": {operation:"export/url", input:"convert-file"},
             }
           })
         });
         const job=await jobResp.json();
-        const uploadTask=job.data.tasks.find(t=>t.name==="upload-file");
+        console.log("CloudConvert job response:", JSON.stringify(job));
+
+        // Handle both {data:{tasks:[]}} and {tasks:[]} response shapes
+        const jobData = job.data || job;
+        const taskList = Array.isArray(jobData.tasks) ? jobData.tasks : Object.values(jobData.tasks||{});
+        const uploadTask = taskList.find(t=>t.name==="upload-file" || t.operation==="import/upload");
+
+        if(!uploadTask) throw new Error("Could not find upload task in CloudConvert response");
 
         // Step 3 — Upload the file to CloudConvert
         const formData=new FormData();
-        Object.entries(uploadTask.result.form.parameters).forEach(([k,v])=>formData.append(k,v));
+        const formParams = uploadTask.result?.form?.parameters || {};
+        Object.entries(formParams).forEach(([k,v])=>formData.append(k,v));
         formData.append("file",file);
-        await fetch(uploadTask.result.form.url,{method:"POST",body:formData});
+        const uploadUrl = uploadTask.result?.form?.url;
+        if(!uploadUrl) throw new Error("No upload URL from CloudConvert");
+        await fetch(uploadUrl,{method:"POST",body:formData});
 
-        // Step 4 — Wait for conversion to complete (poll every second)
+        // Step 4 — Poll for completion
+        const jobId = jobData.id;
         let exportUrl="";
         for(let i=0;i<30;i++){
           await new Promise(r=>setTimeout(r,1500));
-          const statusResp=await fetch(`https://api.cloudconvert.com/v2/jobs/${job.data.id}`,{
+          const statusResp=await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`,{
             headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`}
           });
           const status=await statusResp.json();
-          const exportTask=status.data.tasks.find(t=>t.name==="export-result");
+          const statusData = status.data || status;
+          const tasks = Array.isArray(statusData.tasks) ? statusData.tasks : Object.values(statusData.tasks||{});
+          const exportTask=tasks.find(t=>t.name==="export-result"||t.operation==="export/url");
           if(exportTask?.status==="finished"){
-            exportUrl=exportTask.result.files[0].url;
+            exportUrl=exportTask.result?.files?.[0]?.url;
             break;
           }
-          if(status.data.status==="error") throw new Error("Conversion failed on CloudConvert");
+          if(statusData.status==="error") throw new Error("Conversion failed on CloudConvert");
         }
 
-        if(!exportUrl) throw new Error("Conversion timed out");
+        if(!exportUrl) throw new Error("Conversion timed out — try again");
 
         // Step 5 — Download the converted text
         const txtResp=await fetch(exportUrl);
@@ -1515,7 +1527,15 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
           </div>
           <input ref={fileRef} type="file" accept="image/*,.pdf,.docx,.doc,.xlsx,.xls" onChange={handleImageChange} style={{display:"none"}}/>
 
-          {error&&(
+          {loading&&imageFile?.name?.match(/\.(doc|docx)/i)&&(
+            <div style={{marginTop:12,background:S.tealGlow,border:`1px solid ${S.teal}40`,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{fontSize:20}}>⏳</div>
+              <div>
+                <div style={{color:S.teal,fontWeight:700,fontSize:13}}>Converting via CloudConvert…</div>
+                <div style={{color:S.muted,fontSize:12,marginTop:2}}>Reading your Word file — this takes about 10-15 seconds</div>
+              </div>
+            </div>
+          )}
             <div style={{background:error==="doc_server"?S.cardL:S.dangerGlow,border:`1px solid ${error==="doc_server"?S.border:S.danger+"40"}`,borderRadius:10,padding:"16px 18px",marginTop:12}}>
               {error==="doc_server"?(
                 <div>

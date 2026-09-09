@@ -1240,70 +1240,34 @@ function AIImport({currentUser,agents,isManager,onSave}){
           }catch(e){}
         }
 
-        // Step 2 — Use CloudConvert for .doc files
-        const jobResp = await fetch("https://api.cloudconvert.com/v2/jobs",{
-          method:"POST",
-          headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`,"Content-Type":"application/json"},
-          body:JSON.stringify({
-            tasks:{
-              "upload-file":   {operation:"import/upload"},
-              "convert-file":  {operation:"convert", input:"upload-file", output_format:"txt"},
-              "export-result": {operation:"export/url", input:"convert-file"},
-            }
-          })
+        // Step 2 — Send to Netlify function (avoids CORS issues)
+        const fileBuffer = await file.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(fileBuffer)));
+
+        const resp = await fetch("/.netlify/functions/convert-doc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileBase64: base64, fileName: file.name }),
         });
-        const job=await jobResp.json();
-        console.log("CloudConvert job response:", JSON.stringify(job));
 
-        // Handle both {data:{tasks:[]}} and {tasks:[]} response shapes
-        const jobData = job.data || job;
-        const taskList = Array.isArray(jobData.tasks) ? jobData.tasks : Object.values(jobData.tasks||{});
-        const uploadTask = taskList.find(t=>t.name==="upload-file" || t.operation==="import/upload");
-
-        if(!uploadTask) throw new Error("Could not find upload task in CloudConvert response");
-
-        // Step 3 — Upload the file to CloudConvert
-        const formData=new FormData();
-        const formParams = uploadTask.result?.form?.parameters || {};
-        Object.entries(formParams).forEach(([k,v])=>formData.append(k,v));
-        formData.append("file",file);
-        const uploadUrl = uploadTask.result?.form?.url;
-        if(!uploadUrl) throw new Error("No upload URL from CloudConvert");
-        await fetch(uploadUrl,{method:"POST",body:formData});
-
-        // Step 4 — Poll for completion
-        const jobId = jobData.id;
-        let exportUrl="";
-        for(let i=0;i<30;i++){
-          await new Promise(r=>setTimeout(r,1500));
-          const statusResp=await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`,{
-            headers:{"Authorization":`Bearer ${CLOUDCONVERT_KEY}`}
-          });
-          const status=await statusResp.json();
-          const statusData = status.data || status;
-          const tasks = Array.isArray(statusData.tasks) ? statusData.tasks : Object.values(statusData.tasks||{});
-          const exportTask=tasks.find(t=>t.name==="export-result"||t.operation==="export/url");
-          if(exportTask?.status==="finished"){
-            exportUrl=exportTask.result?.files?.[0]?.url;
-            break;
-          }
-          if(statusData.status==="error") throw new Error("Conversion failed on CloudConvert");
+        if (!resp.ok) {
+          const err = await resp.json().catch(()=>({error:"Server error"}));
+          throw new Error(err.error || "Conversion failed");
         }
 
-        if(!exportUrl) throw new Error("Conversion timed out — try again");
+        const data = await resp.json();
+        if (!data.text) throw new Error("No text returned from converter");
 
-        // Step 5 — Download the converted text
-        const txtResp=await fetch(exportUrl);
-        const text=await txtResp.text();
+        const text = data.text;
         setRawText(text);
         setMode("text");
         setImagePreview(null);
         setLoading(false);
         // Auto-extract fields immediately
-        try{
-          const extracted=extractFromText(text);
+        try {
+          const extracted = extractFromText(text);
           setResult(extracted);
-        }catch(e){}
+        } catch(e) {}
 
       }catch(e){
         setLoading(false);

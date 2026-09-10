@@ -5,30 +5,38 @@ const CC_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiYzR
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Generic HTTPS request helper
-const httpsReq = (url, method="GET", body=null, extraHeaders={}) => new Promise((resolve, reject) => {
-  const u = new URL(url);
-  const opts = {
-    hostname: u.hostname,
-    path: u.pathname + u.search,
-    method,
+const apiReq = (path, method, body, extraHeaders={}) => new Promise((resolve, reject) => {
+  const data = body ? JSON.stringify(body) : null;
+  const req = https.request({
+    hostname: "api.cloudconvert.com",
+    path: "/v2" + path,
+    method: method || "GET",
     headers: {
+      "Authorization": `Bearer ${CC_KEY}`,
       "Content-Type": "application/json",
+      ...(data ? {"Content-Length": Buffer.byteLength(data)} : {}),
       ...extraHeaders
     }
-  };
-  const req = https.request(opts, res => {
-    let data = "";
-    res.on("data", c => data += c);
+  }, res => {
+    let d = "";
+    res.on("data", c => d += c);
     res.on("end", () => {
-      console.log(`[${method}] ${url} → ${res.statusCode}: ${data.slice(0,300)}`);
-      try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-      catch(e) { resolve({ status: res.statusCode, body: data }); }
+      try { resolve({status: res.statusCode, body: JSON.parse(d)}); }
+      catch(e) { resolve({status: res.statusCode, body: d}); }
     });
   });
   req.on("error", reject);
-  if (body) req.write(typeof body === "string" ? body : JSON.stringify(body));
+  if (data) req.write(data);
   req.end();
+});
+
+const downloadUrl = url => new Promise((resolve, reject) => {
+  const u = new URL(url);
+  https.get({hostname: u.hostname, path: u.pathname + u.search}, res => {
+    const chunks = [];
+    res.on("data", c => chunks.push(c));
+    res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  }).on("error", reject);
 });
 
 exports.handler = async (event) => {
@@ -37,128 +45,96 @@ exports.handler = async (event) => {
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
-
-  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
-  if (event.httpMethod !== "POST") return { statusCode: 405, headers, body: "Method not allowed" };
+  if (event.httpMethod === "OPTIONS") return {statusCode:200, headers, body:""};
 
   try {
-    const body = JSON.parse(event.body || "{}");
-    const { fileBase64, fileName } = body;
-    if (!fileBase64 || !fileName) throw new Error("Missing fileBase64 or fileName");
+    const {fileBase64, fileName} = JSON.parse(event.body || "{}");
+    if (!fileBase64 || !fileName) throw new Error("Missing file data");
 
     const fileBuffer = Buffer.from(fileBase64, "base64");
-    console.log(`Processing: ${fileName}, size: ${fileBuffer.length} bytes`);
+    console.log(`File: ${fileName}, ${fileBuffer.length} bytes`);
 
-    // Step 1: Create CloudConvert job
-    const jobResp = await httpsReq(
-      "https://api.cloudconvert.com/v2/jobs",
-      "POST",
-      {
-        tasks: {
-          "upload-file":   { operation: "import/upload" },
-          "convert-file":  { operation: "convert", input: "upload-file", output_format: "txt" },
-          "export-result": { operation: "export/url", input: "convert-file" },
-        }
-      },
-      { "Authorization": `Bearer ${CC_KEY}` }
-    );
+    // ── STEP 1: Create upload task only (not full job — faster)
+    const uploadResp = await apiReq("/tasks", "POST", {
+      operation: "import/upload"
+    });
+    console.log("Upload task:", uploadResp.status, JSON.stringify(uploadResp.body).slice(0,200));
+    if (uploadResp.status !== 201) throw new Error("Upload task failed: " + JSON.stringify(uploadResp.body).slice(0,200));
 
-    console.log("Job response status:", jobResp.status);
-    console.log("Job response body:", JSON.stringify(jobResp.body).slice(0, 500));
-
-    if (jobResp.status !== 201 && jobResp.status !== 200) {
-      throw new Error(`CloudConvert job creation failed (${jobResp.status}): ${JSON.stringify(jobResp.body).slice(0,300)}`);
-    }
-
-    const jobData = jobResp.body.data || jobResp.body;
-    const tasks = Array.isArray(jobData.tasks) ? jobData.tasks : Object.values(jobData.tasks || {});
-    console.log("Tasks found:", tasks.map(t => t.name || t.operation));
-
-    const uploadTask = tasks.find(t => t.name === "upload-file");
-    if (!uploadTask) throw new Error(`No upload task found. Tasks: ${JSON.stringify(tasks).slice(0,300)}`);
-    if (!uploadTask.result?.form) throw new Error(`Upload task has no form yet. Status: ${uploadTask.status}`);
-
-    // Step 2: Upload file
+    const uploadTask = uploadResp.body.data;
+    const uploadId = uploadTask.id;
     const form = uploadTask.result.form;
-    console.log("Upload URL:", form.url);
 
+    // ── STEP 2: Upload file to S3
     const formData = new FormData();
-    Object.entries(form.parameters || {}).forEach(([k, v]) => formData.append(k, v));
-    formData.append("file", fileBuffer, { filename: fileName });
+    Object.entries(form.parameters || {}).forEach(([k,v]) => formData.append(k, v));
+    formData.append("file", fileBuffer, {filename: fileName});
 
     await new Promise((resolve, reject) => {
-      const uploadUrl = new URL(form.url);
+      const u = new URL(form.url);
       const req = https.request({
-        hostname: uploadUrl.hostname,
-        path: uploadUrl.pathname + uploadUrl.search,
-        method: "POST",
-        headers: formData.getHeaders(),
-      }, res => {
-        let d = "";
-        res.on("data", c => d += c);
-        res.on("end", () => {
-          console.log(`Upload response: ${res.statusCode} ${d.slice(0,200)}`);
-          resolve();
-        });
-      });
+        hostname: u.hostname, path: u.pathname + u.search,
+        method: "POST", headers: formData.getHeaders()
+      }, res => { res.resume(); res.on("end", resolve); });
       req.on("error", reject);
       formData.pipe(req);
     });
+    console.log("File uploaded to S3");
 
-    // Step 3: Poll for result
-    const jobId = jobData.id;
-    console.log("Polling job:", jobId);
+    // ── STEP 3: Create convert task
+    const convertResp = await apiReq("/tasks", "POST", {
+      operation: "convert",
+      input: uploadId,
+      output_format: "txt",
+    });
+    console.log("Convert task:", convertResp.status, JSON.stringify(convertResp.body).slice(0,200));
+    if (convertResp.status !== 201) throw new Error("Convert task failed: " + JSON.stringify(convertResp.body).slice(0,200));
+    const convertId = convertResp.body.data.id;
 
-    let text = "";
-    for (let i = 0; i < 20; i++) {
+    // ── STEP 4: Poll convert task (max 25s)
+    let convertedOk = false;
+    for (let i = 0; i < 12; i++) {
       await sleep(2000);
-      const statusResp = await httpsReq(
-        `https://api.cloudconvert.com/v2/jobs/${jobId}`,
-        "GET", null,
-        { "Authorization": `Bearer ${CC_KEY}` }
-      );
+      const check = await apiReq(`/tasks/${convertId}`);
+      const status = check.body.data?.status;
+      console.log(`Convert poll ${i+1}: ${status}`);
+      if (status === "finished") { convertedOk = true; break; }
+      if (status === "error") throw new Error("Convert error: " + JSON.stringify(check.body.data?.message || check.body).slice(0,200));
+    }
+    if (!convertedOk) throw new Error("Convert timed out");
 
-      const statusData = statusResp.body.data || statusResp.body;
-      const sTasks = Array.isArray(statusData.tasks) ? statusData.tasks : Object.values(statusData.tasks || {});
-      const exportTask = sTasks.find(t => t.name === "export-result");
-      const convertTask = sTasks.find(t => t.name === "convert-file");
+    // ── STEP 5: Create export task
+    const exportResp = await apiReq("/tasks", "POST", {
+      operation: "export/url",
+      input: convertId,
+    });
+    console.log("Export task:", exportResp.status);
+    if (exportResp.status !== 201) throw new Error("Export task failed: " + JSON.stringify(exportResp.body).slice(0,200));
+    const exportId = exportResp.body.data.id;
 
-      console.log(`Poll ${i+1}: job=${statusData.status}, convert=${convertTask?.status}, export=${exportTask?.status}`);
-
-      if (convertTask?.status === "error") {
-        throw new Error(`Conversion error: ${JSON.stringify(convertTask.message || convertTask).slice(0,300)}`);
-      }
-
-      if (exportTask?.status === "finished") {
-        const fileUrl = exportTask.result?.files?.[0]?.url;
-        if (!fileUrl) throw new Error("No file URL in export result");
-
-        // Download text
-        text = await new Promise((resolve, reject) => {
-          const u = new URL(fileUrl);
-          https.get({
-            hostname: u.hostname,
-            path: u.pathname + u.search,
-            headers: {}
-          }, res => {
-            let d = "";
-            res.on("data", c => d += c);
-            res.on("end", () => resolve(d));
-          }).on("error", reject);
-        });
-        console.log(`Got text: ${text.slice(0, 100)}`);
+    // ── STEP 6: Poll export task (max 10s)
+    let fileUrl = "";
+    for (let i = 0; i < 5; i++) {
+      await sleep(1500);
+      const check = await apiReq(`/tasks/${exportId}`);
+      const status = check.body.data?.status;
+      console.log(`Export poll ${i+1}: ${status}`);
+      if (status === "finished") {
+        fileUrl = check.body.data?.result?.files?.[0]?.url;
         break;
       }
-
-      if (statusData.status === "error") throw new Error("Job failed: " + JSON.stringify(statusData).slice(0,300));
+      if (status === "error") throw new Error("Export failed");
     }
+    if (!fileUrl) throw new Error("No export URL");
 
-    if (!text) throw new Error("Conversion timed out after 40 seconds");
+    // ── STEP 7: Download text
+    const text = await downloadUrl(fileUrl);
+    console.log(`Got ${text.length} chars of text`);
 
-    return { statusCode: 200, headers, body: JSON.stringify({ text }) };
+    return {statusCode:200, headers, body: JSON.stringify({text})};
 
   } catch(e) {
-    console.error("Error:", e.message);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: e.message }) };
+    console.error("ERROR:", e.message);
+    return {statusCode:500, headers, body: JSON.stringify({error: e.message})};
   }
 };

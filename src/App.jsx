@@ -1251,12 +1251,12 @@ function AIImport({currentUser,agents,isManager,onSave}){
         });
 
         if (!resp.ok) {
-          const err = await resp.json().catch(()=>({error:"Server error"}));
-          throw new Error(err.error || "Conversion failed");
+          const err = await resp.json().catch(()=>({error:"Server error "+resp.status}));
+          throw new Error(err.error || "Conversion failed: "+resp.status);
         }
 
         const data = await resp.json();
-        if (!data.text) throw new Error("No text returned from converter");
+        if (!data.text) throw new Error("No text returned: "+JSON.stringify(data).slice(0,200));
 
         const text = data.text;
         setRawText(text);

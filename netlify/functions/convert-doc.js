@@ -5,26 +5,29 @@ const CC_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiYzR
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const ccFetch = (path, method="GET", body=null) => new Promise((resolve, reject) => {
+// Generic HTTPS request helper
+const httpsReq = (url, method="GET", body=null, extraHeaders={}) => new Promise((resolve, reject) => {
+  const u = new URL(url);
   const opts = {
-    hostname: "api.cloudconvert.com",
-    path: "/v2" + path,
+    hostname: u.hostname,
+    path: u.pathname + u.search,
     method,
     headers: {
-      "Authorization": `Bearer ${CC_KEY}`,
       "Content-Type": "application/json",
+      ...extraHeaders
     }
   };
   const req = https.request(opts, res => {
     let data = "";
     res.on("data", c => data += c);
     res.on("end", () => {
-      try { resolve(JSON.parse(data)); }
-      catch(e) { reject(new Error("Invalid JSON: " + data.slice(0,200))); }
+      console.log(`[${method}] ${url} → ${res.statusCode}: ${data.slice(0,300)}`);
+      try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+      catch(e) { resolve({ status: res.statusCode, body: data }); }
     });
   });
   req.on("error", reject);
-  if (body) req.write(JSON.stringify(body));
+  if (body) req.write(typeof body === "string" ? body : JSON.stringify(body));
   req.end();
 });
 
@@ -39,30 +42,48 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, headers, body: "Method not allowed" };
 
   try {
-    // Parse multipart body — file is sent as base64
     const body = JSON.parse(event.body || "{}");
     const { fileBase64, fileName } = body;
     if (!fileBase64 || !fileName) throw new Error("Missing fileBase64 or fileName");
 
     const fileBuffer = Buffer.from(fileBase64, "base64");
+    console.log(`Processing: ${fileName}, size: ${fileBuffer.length} bytes`);
 
-    // 1. Create job
-    const job = await ccFetch("/jobs", "POST", {
-      tasks: {
-        "upload-file":   { operation: "import/upload" },
-        "convert-file":  { operation: "convert", input: "upload-file", output_format: "txt" },
-        "export-result": { operation: "export/url", input: "convert-file" },
-      }
-    });
+    // Step 1: Create CloudConvert job
+    const jobResp = await httpsReq(
+      "https://api.cloudconvert.com/v2/jobs",
+      "POST",
+      {
+        tasks: {
+          "upload-file":   { operation: "import/upload" },
+          "convert-file":  { operation: "convert", input: "upload-file", output_format: "txt" },
+          "export-result": { operation: "export/url", input: "convert-file" },
+        }
+      },
+      { "Authorization": `Bearer ${CC_KEY}` }
+    );
 
-    const tasks = job.data?.tasks || [];
+    console.log("Job response status:", jobResp.status);
+    console.log("Job response body:", JSON.stringify(jobResp.body).slice(0, 500));
+
+    if (jobResp.status !== 201 && jobResp.status !== 200) {
+      throw new Error(`CloudConvert job creation failed (${jobResp.status}): ${JSON.stringify(jobResp.body).slice(0,300)}`);
+    }
+
+    const jobData = jobResp.body.data || jobResp.body;
+    const tasks = Array.isArray(jobData.tasks) ? jobData.tasks : Object.values(jobData.tasks || {});
+    console.log("Tasks found:", tasks.map(t => t.name || t.operation));
+
     const uploadTask = tasks.find(t => t.name === "upload-file");
-    if (!uploadTask) throw new Error("No upload task: " + JSON.stringify(job).slice(0,300));
+    if (!uploadTask) throw new Error(`No upload task found. Tasks: ${JSON.stringify(tasks).slice(0,300)}`);
+    if (!uploadTask.result?.form) throw new Error(`Upload task has no form yet. Status: ${uploadTask.status}`);
 
-    // 2. Upload file via multipart form
+    // Step 2: Upload file
     const form = uploadTask.result.form;
+    console.log("Upload URL:", form.url);
+
     const formData = new FormData();
-    Object.entries(form.parameters || {}).forEach(([k,v]) => formData.append(k, v));
+    Object.entries(form.parameters || {}).forEach(([k, v]) => formData.append(k, v));
     formData.append("file", fileBuffer, { filename: fileName });
 
     await new Promise((resolve, reject) => {
@@ -72,40 +93,72 @@ exports.handler = async (event) => {
         path: uploadUrl.pathname + uploadUrl.search,
         method: "POST",
         headers: formData.getHeaders(),
-      }, res => { res.on("data",()=>{}); res.on("end", resolve); });
+      }, res => {
+        let d = "";
+        res.on("data", c => d += c);
+        res.on("end", () => {
+          console.log(`Upload response: ${res.statusCode} ${d.slice(0,200)}`);
+          resolve();
+        });
+      });
       req.on("error", reject);
       formData.pipe(req);
     });
 
-    // 3. Poll for result
-    const jobId = job.data.id;
+    // Step 3: Poll for result
+    const jobId = jobData.id;
+    console.log("Polling job:", jobId);
+
     let text = "";
     for (let i = 0; i < 20; i++) {
       await sleep(2000);
-      const status = await ccFetch(`/jobs/${jobId}`);
-      const sTasks = status.data?.tasks || [];
+      const statusResp = await httpsReq(
+        `https://api.cloudconvert.com/v2/jobs/${jobId}`,
+        "GET", null,
+        { "Authorization": `Bearer ${CC_KEY}` }
+      );
+
+      const statusData = statusResp.body.data || statusResp.body;
+      const sTasks = Array.isArray(statusData.tasks) ? statusData.tasks : Object.values(statusData.tasks || {});
       const exportTask = sTasks.find(t => t.name === "export-result");
+      const convertTask = sTasks.find(t => t.name === "convert-file");
+
+      console.log(`Poll ${i+1}: job=${statusData.status}, convert=${convertTask?.status}, export=${exportTask?.status}`);
+
+      if (convertTask?.status === "error") {
+        throw new Error(`Conversion error: ${JSON.stringify(convertTask.message || convertTask).slice(0,300)}`);
+      }
+
       if (exportTask?.status === "finished") {
         const fileUrl = exportTask.result?.files?.[0]?.url;
         if (!fileUrl) throw new Error("No file URL in export result");
-        // Download converted text
+
+        // Download text
         text = await new Promise((resolve, reject) => {
           const u = new URL(fileUrl);
-          https.get({ hostname: u.hostname, path: u.pathname + u.search }, res => {
+          https.get({
+            hostname: u.hostname,
+            path: u.pathname + u.search,
+            headers: {}
+          }, res => {
             let d = "";
             res.on("data", c => d += c);
             res.on("end", () => resolve(d));
           }).on("error", reject);
         });
+        console.log(`Got text: ${text.slice(0, 100)}`);
         break;
       }
-      if (status.data?.status === "error") throw new Error("CloudConvert conversion failed");
+
+      if (statusData.status === "error") throw new Error("Job failed: " + JSON.stringify(statusData).slice(0,300));
     }
 
-    if (!text) throw new Error("Conversion timed out");
+    if (!text) throw new Error("Conversion timed out after 40 seconds");
+
     return { statusCode: 200, headers, body: JSON.stringify({ text }) };
 
   } catch(e) {
+    console.error("Error:", e.message);
     return { statusCode: 500, headers, body: JSON.stringify({ error: e.message }) };
   }
 };

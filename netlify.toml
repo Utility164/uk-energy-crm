@@ -3,12 +3,6 @@
   publish = "dist"
   functions = "netlify/functions"
 
-[functions]
-  node_bundler = "esbuild"
-
-[functions."convert-doc"]
-  timeout = 30
-
 [[redirects]]
   from = "/*"
   to = "/index.html"

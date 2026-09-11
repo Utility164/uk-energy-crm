@@ -9,9 +9,8 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-const apiPost = (path, body) => new Promise((resolve, reject) => {
+// POST to CloudConvert API
+const ccPost = (path, body) => new Promise((resolve, reject) => {
   const data = JSON.stringify(body);
   const req = https.request({
     hostname: "api.cloudconvert.com", path: "/v2" + path, method: "POST",
@@ -22,41 +21,23 @@ const apiPost = (path, body) => new Promise((resolve, reject) => {
     }
   }, res => {
     let d = ""; res.on("data", c => d += c);
-    res.on("end", () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({error: d}); }});
+    res.on("end", () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({_raw: d}); }});
   });
   req.on("error", reject); req.write(data); req.end();
 });
 
-const apiGet = path => new Promise((resolve, reject) => {
-  const req = https.request({
-    hostname: "api.cloudconvert.com", path: "/v2" + path, method: "GET",
-    headers: { "Authorization": `Bearer ${CC_KEY}` }
-  }, res => {
-    let d = ""; res.on("data", c => d += c);
-    res.on("end", () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({error: d}); }});
-  });
-  req.on("error", reject); req.end();
-});
-
-const s3Upload = (url, params, fileBuffer, fileName) => new Promise((resolve, reject) => {
+// Upload file to S3
+const s3Upload = (url, params, buf, name) => new Promise((resolve, reject) => {
   const form = new FormData();
-  Object.entries(params).forEach(([k,v]) => form.append(k, v));
-  form.append("file", fileBuffer, {filename: fileName});
+  Object.entries(params||{}).forEach(([k,v]) => form.append(k,v));
+  form.append("file", buf, {filename: name});
   const u = new URL(url);
   const req = https.request({
-    hostname: u.hostname, path: u.pathname + u.search,
+    hostname: u.hostname, path: u.pathname+u.search,
     method: "POST", headers: form.getHeaders()
   }, res => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
   req.on("error", reject);
   form.pipe(req);
-});
-
-const download = url => new Promise((resolve, reject) => {
-  const u = new URL(url);
-  https.get({hostname: u.hostname, path: u.pathname + u.search}, res => {
-    const chunks = []; res.on("data", c => chunks.push(c));
-    res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-  }).on("error", reject);
 });
 
 exports.handler = async (event) => {
@@ -66,56 +47,41 @@ exports.handler = async (event) => {
     const {fileBase64, fileName} = JSON.parse(event.body||"{}");
     if (!fileBase64||!fileName) throw new Error("Missing file");
     const buf = Buffer.from(fileBase64, "base64");
-    console.log(`[convert-doc] ${fileName} ${buf.length}b`);
 
-    // 1. Create full job with synchronous: false
-    const jobResp = await apiPost("/jobs", {
+    // STEP 1: Create job (just upload + convert + export tasks)
+    const jobResp = await ccPost("/jobs", {
       tasks: {
         "upload":  {operation:"import/upload"},
         "convert": {operation:"convert", input:"upload", output_format:"txt"},
         "export":  {operation:"export/url", input:"convert"},
       }
     });
-    console.log("[convert-doc] job:", JSON.stringify(jobResp).slice(0,300));
 
     const job = jobResp.data;
-    if (!job) throw new Error("No job data: " + JSON.stringify(jobResp).slice(0,200));
+    if (!job?.id) throw new Error("Job creation failed: " + JSON.stringify(jobResp).slice(0,300));
 
     const tasks = Array.isArray(job.tasks) ? job.tasks : [];
     const uploadTask = tasks.find(t=>t.name==="upload");
-    if (!uploadTask?.result?.form) throw new Error("No upload form. Tasks: " + JSON.stringify(tasks.map(t=>({name:t.name,status:t.status}))));
+    if (!uploadTask?.result?.form) throw new Error("No upload form in job response");
 
-    // 2. Upload to S3
-    const sc = await s3Upload(
+    // STEP 2: Upload file to S3
+    await s3Upload(
       uploadTask.result.form.url,
       uploadTask.result.form.parameters,
       buf, fileName
     );
-    console.log("[convert-doc] S3 upload status:", sc);
 
-    // 3. Poll job — max 25 polls × 1s = 25s
-    for (let i = 0; i < 25; i++) {
-      await sleep(1000);
-      const status = await apiGet(`/jobs/${job.id}`);
-      const jtasks = Array.isArray(status.data?.tasks) ? status.data.tasks : [];
-      const exp = jtasks.find(t=>t.name==="export");
-      const conv = jtasks.find(t=>t.name==="convert");
-      console.log(`[convert-doc] poll ${i+1}: job=${status.data?.status} conv=${conv?.status} exp=${exp?.status}`);
-
-      if (conv?.status==="error") throw new Error("Convert error: "+(conv.message||JSON.stringify(conv).slice(0,200)));
-      if (exp?.status==="finished") {
-        const fileUrl = exp.result?.files?.[0]?.url;
-        if (!fileUrl) throw new Error("No file URL");
-        const text = await download(fileUrl);
-        console.log("[convert-doc] text length:", text.length);
-        return {statusCode:200, headers:CORS, body:JSON.stringify({text})};
-      }
-      if (status.data?.status==="error") throw new Error("Job error: "+JSON.stringify(status.data).slice(0,200));
-    }
-    throw new Error("Timed out after 25s");
+    // Return job ID to browser — browser will poll CloudConvert directly
+    return {
+      statusCode: 200, headers: CORS,
+      body: JSON.stringify({
+        jobId: job.id,
+        apiKey: CC_KEY,  // safe — browser will use it to poll only
+      })
+    };
 
   } catch(e) {
-    console.error("[convert-doc] ERROR:", e.message);
+    console.error("[convert-doc]", e.message);
     return {statusCode:500, headers:CORS, body:JSON.stringify({error:e.message})};
   }
 };

@@ -1240,7 +1240,7 @@ function AIImport({currentUser,agents,isManager,onSave}){
           }catch(e){}
         }
 
-        // Step 2 — Send to Netlify function (avoids CORS issues)
+        // Step 2 — Netlify function handles upload, returns job ID
         const fileBuffer = await file.arrayBuffer();
         const base64 = btoa(String.fromCharCode(...new Uint8Array(fileBuffer)));
 
@@ -1252,22 +1252,42 @@ function AIImport({currentUser,agents,isManager,onSave}){
 
         if (!resp.ok) {
           const err = await resp.json().catch(()=>({error:"Server error "+resp.status}));
-          throw new Error(err.error || "Conversion failed: "+resp.status);
+          throw new Error(err.error || "Upload failed: "+resp.status);
         }
 
-        const data = await resp.json();
-        if (!data.text) throw new Error("No text returned: "+JSON.stringify(data).slice(0,200));
+        const {jobId, apiKey} = await resp.json();
+        if (!jobId) throw new Error("No job ID returned");
 
-        const text = data.text;
+        // Step 3 — Poll CloudConvert directly from browser (bypasses Netlify timeout)
+        let text = "";
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r=>setTimeout(r,1500));
+          const statusResp = await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
+            headers: { "Authorization": `Bearer ${apiKey}` }
+          });
+          const status = await statusResp.json();
+          const jtasks = Array.isArray(status.data?.tasks) ? status.data.tasks : [];
+          const exp  = jtasks.find(t=>t.name==="export");
+          const conv = jtasks.find(t=>t.name==="convert");
+          if (conv?.status==="error") throw new Error("Convert error: "+(conv.message||"unknown"));
+          if (exp?.status==="finished") {
+            const fileUrl = exp.result?.files?.[0]?.url;
+            if (!fileUrl) throw new Error("No file URL");
+            const txtResp = await fetch(fileUrl);
+            text = await txtResp.text();
+            break;
+          }
+          if (status.data?.status==="error") throw new Error("Job failed");
+        }
+
+        if (!text) throw new Error("Conversion timed out — please try again");
+
         setRawText(text);
         setMode("text");
         setImagePreview(null);
         setLoading(false);
-        // Auto-extract fields immediately
-        try {
-          const extracted = extractFromText(text);
-          setResult(extracted);
-        } catch(e) {}
+        // Auto-extract fields
+        try { const extracted=extractFromText(text); setResult(extracted); } catch(e) {}
 
       }catch(e){
         setLoading(false);

@@ -1240,54 +1240,58 @@ function AIImport({currentUser,agents,isManager,onSave}){
           }catch(e){}
         }
 
-        // Step 2 — Netlify function handles upload, returns job ID
-        const fileBuffer = await file.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(fileBuffer)));
+        // Fully browser-side CloudConvert — no Netlify needed
+        const CC = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiYzRhZGNkYmZlODE1N2YzZTZlZDc2OTVkMTE3OTFmMThhMmJmMWJiMTE1ZmZmM2M3NWJkNzE1NWJhMDVlMzg0ODBkOTU1YTBmMmE4Y2JkMGUiLCJpYXQiOjE3ODg3ODAxMjIuODczMTUyLCJuYmYiOjE3ODg3ODAxMjIuODczMTUzLCJleHAiOjQ5NDQ0NTM3MjIuODY0OTA3LCJzdWIiOiI3Njg3ODg1MyIsInNjb3BlcyI6WyJ1c2VyLnJlYWQiLCJ0YXNrLnJlYWQiLCJ0YXNrLndyaXRlIl19.P4E5CZNKfqWcWdc3f9Nj-n3ytNZnud3IfsQciHV2WqaT_5H7GGDMbvNNPRBYkEvuVQ-cTEbsTcvYxdWb6R5dYPMuolwc1dQGphwWqyc6L0nj0IpSkMu-2looQCA2aDW7bU8Q2qui90Dszq_Ljzh5egbyFmi45OXRhtpi2wRKOaBhvSNQfTQjpBmgj7oznMqAn9dq0n0FYhbv8jl3DML97AMSEhFgTXWPiMiWVJtzh3vIY2LQxa1yEDrQ9yi_262g4cYkRbTSMrpPiww46EoGcaOqoIDLUT5hOH1zbD1YW18ihEAn4Mo-KhNVfIcl2v-1d3Ils99jmTLGcxf30K49IYQNsvHY066NCwWtzEeDVDJe_Sw0yfPZMNLqaxdmDfr-8epl1nlYC0Icxh91q0fBaWJ-3adgn0DLnAqlMzBZwv-eKwZwEAAsO23MGQSDQRGqKktTOx89ThhINOEL2GwyzOYs3EDowOvXvpyceoHvzEba-U7UnTrIxVvbrmyIigy0mA7Vaibw3kG33gS2taNcOTa735kIBR49xreqn9kyTswQ9vI3Hnmd-kcqUvo8bIPPWpYgoBanV5gjSpwq74biZE3avbXR1a1AfGijjPzl6XPYCLtFpoiFgHee5IDq0TXXNB-gs6e7zchRPRmFCIrRp37pLE8PQaPOz3N30oipWk8";
+        const ccHdr = {"Authorization":`Bearer ${CC}`,"Content-Type":"application/json"};
 
-        const resp = await fetch("/.netlify/functions/convert-doc", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileBase64: base64, fileName: file.name }),
+        // 1. Create job
+        const jobResp = await fetch("https://api.cloudconvert.com/v2/jobs",{
+          method:"POST", headers:ccHdr,
+          body:JSON.stringify({tasks:{
+            "upload":  {operation:"import/upload"},
+            "convert": {operation:"convert",input:"upload",output_format:"txt"},
+            "export":  {operation:"export/url",input:"convert"},
+          }})
         });
+        const jobJson = await jobResp.json();
+        const job = jobJson.data;
+        if (!job?.id) throw new Error("Job creation failed: "+JSON.stringify(jobJson).slice(0,200));
 
-        if (!resp.ok) {
-          const err = await resp.json().catch(()=>({error:"Server error "+resp.status}));
-          throw new Error(err.error || "Upload failed: "+resp.status);
-        }
+        const tasks = Array.isArray(job.tasks)?job.tasks:[];
+        const uploadTask = tasks.find(t=>t.name==="upload");
+        if (!uploadTask?.result?.form) throw new Error("No upload form");
 
-        const {jobId, apiKey} = await resp.json();
-        if (!jobId) throw new Error("No job ID returned");
+        // 2. Upload file directly to S3 from browser
+        const form = new FormData();
+        Object.entries(uploadTask.result.form.parameters||{}).forEach(([k,v])=>form.append(k,v));
+        form.append("file", file, file.name);
+        await fetch(uploadTask.result.form.url,{method:"POST",body:form});
 
-        // Step 3 — Poll CloudConvert directly from browser (bypasses Netlify timeout)
-        let text = "";
-        for (let i = 0; i < 40; i++) {
+        // 3. Poll job for result
+        let text="";
+        for(let i=0;i<40;i++){
           await new Promise(r=>setTimeout(r,1500));
-          const statusResp = await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
-            headers: { "Authorization": `Bearer ${apiKey}` }
-          });
-          const status = await statusResp.json();
-          const jtasks = Array.isArray(status.data?.tasks) ? status.data.tasks : [];
+          const st = await fetch(`https://api.cloudconvert.com/v2/jobs/${job.id}`,{headers:ccHdr});
+          const sd = (await st.json()).data;
+          const jtasks = Array.isArray(sd?.tasks)?sd.tasks:[];
           const exp  = jtasks.find(t=>t.name==="export");
           const conv = jtasks.find(t=>t.name==="convert");
-          if (conv?.status==="error") throw new Error("Convert error: "+(conv.message||"unknown"));
-          if (exp?.status==="finished") {
-            const fileUrl = exp.result?.files?.[0]?.url;
-            if (!fileUrl) throw new Error("No file URL");
-            const txtResp = await fetch(fileUrl);
-            text = await txtResp.text();
+          if(conv?.status==="error") throw new Error("Convert error");
+          if(exp?.status==="finished"){
+            const url=exp.result?.files?.[0]?.url;
+            if(!url) throw new Error("No file URL");
+            text=await(await fetch(url)).text();
             break;
           }
-          if (status.data?.status==="error") throw new Error("Job failed");
+          if(sd?.status==="error") throw new Error("Job failed");
         }
-
-        if (!text) throw new Error("Conversion timed out — please try again");
+        if(!text) throw new Error("Timed out — please try again");
 
         setRawText(text);
         setMode("text");
         setImagePreview(null);
         setLoading(false);
-        // Auto-extract fields
-        try { const extracted=extractFromText(text); setResult(extracted); } catch(e) {}
+        try{const extracted=extractFromText(text);setResult(extracted);}catch(e){}
 
       }catch(e){
         setLoading(false);

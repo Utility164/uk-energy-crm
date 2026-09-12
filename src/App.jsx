@@ -1676,90 +1676,163 @@ function BulkImport({currentUser,agents,saveCustomer}){
   };
 
   const extractFromText=(rawText)=>{
-    const lines=rawText.split(/\n/).map(l=>l.trim()).filter(l=>l.length>0);
+    // Split into lines, clean, filter out empty lines AND pure number lines (row numbers in sheet)
+    const lines=rawText.split(/\n/)
+      .map(l=>l.trim())
+      .filter(l=>l.length>0 && !/^\d{1,2}$/.test(l));
+
+    // Find value after a label — returns next non-empty, non-number, non-label line
     const after=(label,skip=[])=>{
       const lbl=label.toLowerCase();
       for(let i=0;i<lines.length;i++){
         if(lines[i].toLowerCase().includes(lbl)){
-          for(let j=i+1;j<Math.min(i+5,lines.length);j++){
+          for(let j=i+1;j<Math.min(i+6,lines.length);j++){
             const v=lines[j].trim();
-            if(v&&!skip.some(s=>v.toLowerCase().includes(s.toLowerCase()))&&v.toLowerCase()!==lbl){return v;}
+            if(!v) continue;
+            if(/^\d{1,2}$/.test(v)) continue; // skip row numbers
+            if(v.toLowerCase()===lbl) continue;
+            if(skip.some(s=>v.toLowerCase().includes(s.toLowerCase()))) continue;
+            return v;
           }
         }
       }
       return "";
     };
-    const cleanNum=v=>v.replace(/\s+/g,"");
-    const normDate=v=>{if(!v)return "";const m=v.match(/(\d{1,2})[\-\/\.](\d{1,2})[\-\/\.](\d{2,4})/);if(m){const d=m[1].padStart(2,"0"),mo=m[2].padStart(2,"0"),y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${mo}-${d}`;}return v;};
+
+    const cleanNum = v => v.replace(/\s+/g,"");
+
+    const normDate = v => {
+      if(!v) return "";
+      const m=v.match(/(\d{1,2})[\-\/\.](\d{1,2})[\-\/\.](\d{2,4})/);
+      if(m){
+        const d=m[1].padStart(2,"0"),mo=m[2].padStart(2,"0"),y=m[3].length===2?"20"+m[3]:m[3];
+        return `${y}-${mo}-${d}`;
+      }
+      return v;
+    };
+
+    // Extract email from anywhere in text
     const emailMatch=rawText.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
     const email=emailMatch?emailMatch[1]:"";
+
+    // Remarks — line after REMARKS: label, strip email part
     const remarksRaw=after("REMARKS",["CHECKED","MANAGER","EDITOR"]);
-    const remarks=remarksRaw.replace(/Email:?\s*[^\s]+/gi,"").trim();
-    const pmRaw=after("PAYMENT METHOD")||after("BILL PAYMENT");
+    const remarks=remarksRaw.replace(/Email:?\s*[^\s]+/gi,"").replace(/\(WRITE EVERYTHING.*\)/gi,"").trim();
+
+    // Payment method
+    const pmRaw=after("PAYMENT")||after("BILL PAYMENT")||"";
     const pm=(pmRaw.toLowerCase().includes("d/d")||pmRaw.toLowerCase().includes("direct"))?"Direct Debit":"Cash / Cheque";
-    const suppliers=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
-    const offeredLine=lines.find(l=>l.toLowerCase().includes("offered rate"))||"";
-    const elecSupplier=suppliers.find(s=>offeredLine.toLowerCase().includes(s.toLowerCase()))||after("CURRENT SUPPLIER")||"";
-    const supplyNos=lines.filter(l=>/^S[\s\d]{5,}/.test(l)||/S\s*\d{2}\s*\d{3}/.test(l));
-    const elec1SupplyNo=supplyNos[0]?cleanNum(supplyNos[0]):"";
-    const elec2SupplyNo=supplyNos[1]?cleanNum(supplyNos[1]):"";
-    const ratesLine=lines.find(l=>/\d+\.\d+/.test(l))||"";
-    const rateNums=ratesLine.match(/\d+\.?\d*/g)||[];
+
+    // Suppliers list
+    const SUPPLIERS=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
+    const findSupplier=(hint)=>{
+      const area=hint?rawText.slice(Math.max(0,rawText.toLowerCase().indexOf(hint.toLowerCase()))):rawText;
+      for(const s of SUPPLIERS){if(area.toLowerCase().includes(s.toLowerCase()))return s;}
+      return "";
+    };
+
+    // Supply numbers — lines that look like supply numbers (S followed by digits)
+    // In this sheet format they appear split across lines, so join nearby S lines
+    const supplyNos=[];
+    for(let i=0;i<lines.length;i++){
+      if(lines[i]==="S"||lines[i].match(/^S\s*\d/)){
+        // Collect next few digit lines to build full supply number
+        let num="S";
+        for(let j=i+1;j<Math.min(i+8,lines.length);j++){
+          if(/^[\d\s]+$/.test(lines[j])) num+=lines[j].replace(/\s/g,"");
+          else break;
+        }
+        if(num.length>3) supplyNos.push(num);
+      }
+    }
+
+    // EAC / Annual consumption
+    const eacLine=after("EAC")||after("ANNUAL CONSUMPTION")||"";
+    const annualConsumption=eacLine.replace(/[^\d]/g,"")||"";
+
+    // Rates — find number values after OFFERED RATE line
+    const offeredIdx=lines.findIndex(l=>l.toLowerCase().includes("offered rate"));
+    const rateNums=[];
+    if(offeredIdx>=0){
+      for(let i=offeredIdx+1;i<Math.min(offeredIdx+15,lines.length);i++){
+        const m=lines[i].match(/^(\d+\.\d+)$/);
+        if(m) rateNums.push(m[1]);
+      }
+    }
+
+    // Contract term — look for "1Year" or "2 Years" etc
+    const termLine=lines.find(l=>/\d+\s*year/i.test(l))||"";
+    const contractTerm=termLine||after("CONTRACT TERM")||"";
+
+    // Mobile No — skip "SUPPLY ADDRESS" label which appears right after
+    const mobileRaw=after("MOBILE NO",["SUPPLY ADDRESS","SUPPLY","ADDRESS"]);
+    const mobile=mobileRaw&&/07\d{9}/.test(mobileRaw.replace(/\s/g,""))?mobileRaw:"";
+
     return {
-      agentName:after("AGENT NAME"),
-      date:normDate(after("DATE")),
-      businessName:after("BUSINESS NAME"),
+      agentName:        after("AGENT NAME"),
+      date:             normDate(after("DATE",["BIRTH"])),
+      businessName:     after("BUSINESS NAME"),
       contactPersonName:after("CONTACT PERSON NAME",["MOBILE","SUPPLY"]),
-      telephoneNo:after("LAND LINE"),
-      mobileNo:after("MOBILE NO",["SUPPLY ADDRESS"]),
-      landlineNo:after("LAND LINE"),
-      email:email,
-      supplyAddress:after("SUPPLY ADDRESS",["POSTCODE"]),
-      postcode:after("POSTCODE"),
-      commercialRes:after("COMMERCIAL",["CONTRACT TERM"])||"Commercial",
-      companyRegNo:after("COMPANY REGISTRATION"),
-      elec1Supplier:elecSupplier,
-      elec1SupplyNo:elec1SupplyNo,
-      elec1OfferRate:rateNums[1]||"",
-      elec1SCharge:rateNums[0]||"",
-      elec1Day:rateNums[2]||"",
-      elec1Night:rateNums[3]||"",
-      elec1EveWend:rateNums[4]||"",
-      elec1ContractTerm:after("CONTRACT TERM"),
-      elec1ContractEnd:normDate(after("Contract End Date")),
+      telephoneNo:      after("LAND LINE"),
+      mobileNo:         mobile,
+      landlineNo:       after("LAND LINE"),
+      email:            email,
+      supplyAddress:    after("SUPPLY ADDRESS",["POSTCODE","NE","B1","M1","LS","E1","W1","N1"]),
+      postcode:         after("POSTCODE"),
+      commercialRes:    after("COMMERCIAL",["TERM"])||"Commercial",
+      companyRegNo:     after("COMPANY REGISTRATION"),
+
+      // Electricity
+      elec1Supplier:    findSupplier("CURRENT SUPPLIER")||findSupplier("electric")||"",
+      elec1SupplyNo:    supplyNos[0]||"",
+      elec1OfferRate:   rateNums[1]||"",
+      elec1SCharge:     rateNums[0]||"",
+      elec1Day:         rateNums[2]||"",
+      elec1Night:       rateNums[3]||"",
+      elec1EveWend:     rateNums[4]||"",
+      elec1ContractTerm:contractTerm,
+      elec1ContractEnd: normDate(after("Contract End Date")),
       elec1ContractStart:normDate(after("Contract Start Date")),
-      elec1NameOnBill:after("NAME APPEAR ON BILL"),
-      elec1AnnualConsumption:after("ANNUAL CONSUMPTION")||after("EAC"),
-      elec1MeterSerial:after("METER SERIAL NO"),
-      elec1MeterRead:after("CURRENT METER READ"),
-      elec2Supplier:"",elec2SupplyNo:elec2SupplyNo,elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
-      gas1Supplier:after("GAS SUPPLIER")||after("CURRENT GAS SUPPLIER"),
-      gas1MPRN:after("MPRN"),
-      gas1UnitRate:after("GAS UNIT RATE")||after("GAS RATE"),
-      gas1OfferedSCharge:after("GAS STANDING"),
-      gas1AQ:after("AQ")||after("ANNUAL QUANTITY"),
-      gas1ContractEnd:normDate(after("GAS CONTRACT END")||after("GAS END DATE")),
-      gas1ContractStart:normDate(after("GAS CONTRACT START")||after("GAS START DATE")),
-      gas1ContractTerm:after("GAS CONTRACT TERM")||after("GAS TERM"),
-      gas1SiteNoBG:after("SITE NO"),
-      gas1NameOnBill:after("GAS NAME ON BILL"),
-      gas1MeterRead:after("GAS METER READ"),
-      gas1MeterSerial:after("GAS METER SERIAL"),
-      gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
-      bankName:after("BANK NAME"),
-      accountTitle:after("ACCOUNT TITLE"),
-      branchAddress:after("BRANCH ADDRESS"),
-      sortCode:cleanNum(after("SORT CODE")),
-      accountNo:cleanNum(after("ACCOUNT  NO")||after("ACCOUNT NO")),
+      elec1NameOnBill:  after("NAME APPEAR ON BILL"),
+      elec1AnnualConsumption: annualConsumption,
+      elec1MeterSerial: after("METER SERIAL NO",["LATEST","BILL"]),
+      elec1MeterRead:   after("CURRENT METER READ",["METER SERIAL"]),
+      elec2Supplier:"",elec2SupplyNo:supplyNos[1]||"",elec2OfferRate:"",elec2SCharge:"",
+      elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",
+      elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
+
+      // Gas
+      gas1Supplier:     findSupplier("GAS")||"",
+      gas1MPRN:         after("MPRN"),
+      gas1UnitRate:     after("GAS UNIT RATE")||after("GAS RATE")||"",
+      gas1OfferedSCharge:after("GAS STANDING")||"",
+      gas1AQ:           after("AQ")||"",
+      gas1ContractEnd:  normDate(after("GAS CONTRACT END")||after("GAS END")||""),
+      gas1ContractStart:normDate(after("GAS CONTRACT START")||after("GAS START")||""),
+      gas1ContractTerm: after("GAS CONTRACT TERM")||after("GAS TERM")||"",
+      gas1SiteNoBG:     after("SITE NO"),
+      gas1NameOnBill:   after("GAS NAME ON BILL")||"",
+      gas1MeterRead:    "",
+      gas1MeterSerial:  "",
+      gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",
+      gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",
+      gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
+
+      // Bank
+      bankName:         after("BANK NAME"),
+      accountTitle:     after("ACCOUNT TITLE"),
+      branchAddress:    after("BRANCH ADDRESS"),
+      sortCode:         cleanNum(after("SORT CODE")),
+      accountNo:        cleanNum(after("ACCOUNT  NO")||after("ACCOUNT NO")||""),
       billPaymentMethod:pm,
-      landlordName:after("LANDLORD NAME"),
-      directorsHomeAddress:after("DIRECTORS HOME ADDRESS"),
-      directorsDOB:normDate(after("DATE OF BIRTH")),
+      landlordName:     after("LANDLORD NAME"),
+      directorsHomeAddress:after("DIRECTORS HOME ADDRESS")||after("HOME ADDRESS")||"",
+      directorsDOB:     normDate(after("DATE OF BIRTH")||after("BIRTH")||""),
       nameOfNewCustomer:after("NAME OF NEW CUSTOMER"),
-      remarks:remarks,
-      checkedByManager:after("CHECKED BY",["MANAGER","EDITOR"]),
-      checkedByEditor:"",
-      renewalStatus:"Not Due",
+      remarks:          remarks,
+      checkedByManager: after("CHECKED BY",["MANAGER","EDITOR"])||after("CHECKED")||"",
+      checkedByEditor:  "",
+      renewalStatus:    "Not Due",
     };
   };
 

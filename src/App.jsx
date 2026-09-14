@@ -1676,29 +1676,41 @@ function BulkImport({currentUser,agents,saveCustomer}){
   };
 
   const extractFromText=(rawText)=>{
-    const LABELS=[
-      'AGENT NAME','DATE','BUSINESS NAME','LAND LINE','CONTACT PERSON','MOBILE NO',
+    // Split document into CONTACT section and BANK section
+    // to avoid cross-contamination between sections
+    const bankIdx = rawText.toUpperCase().indexOf("BANK DETAILS");
+    const contactSection = bankIdx > 0 ? rawText.slice(0, bankIdx) : rawText;
+    const bankSection = bankIdx > 0 ? rawText.slice(bankIdx) : rawText;
+
+    const LABEL_KEYS=[
+      'AGENT NAME','DATE','BUSINESS NAME','LAND LINE','CONTACT PERSON','MOBILE',
       'SUPPLY ADDRESS','POSTCODE','ELECTRICITY','METER','CURRENT SUPPLIER','SUPPLY NO',
       'OFFERED RATE','S.CHARGE','DAY','NIGHT','EVE','EAC','CONTRACT END','CONTRACT START',
       'SITE NO','NAME APPEAR','CURRENT METER','METER SERIAL','LATEST BILL','PAYMENT',
       'PYMT','COMMERCIAL','CONTRACT TERM','ANNUAL CONSUMPTION','COMPANY REGISTRATION',
       'BANK','ACCOUNT TITLE','BRANCH','SORT CODE','ACCOUNT NO','BILL PAYMENT',
       'LANDLORD','DIRECTORS','DIRECTOR','NAME OF NEW','REMARKS','CHECKED','MANAGER','EDITOR',
-      'UPLIFT','CONTRACT SHEET','BRANCH ADDRESS'
+      'UPLIFT','CONTRACT SHEET','DETAILS','CUSTOMER'
     ];
-    const isLabel=v=>LABELS.some(k=>v.toUpperCase().includes(k))||/^\d{1,2}$/.test(v);
-    const linesAll=rawText.split(/\n/).map(l=>l.trim());
+    const isLabel=v=>{
+      if(!v||!v.trim()) return true;
+      if(/^\d{1,2}$/.test(v.trim())) return true;
+      const up=v.toUpperCase();
+      return LABEL_KEYS.some(k=>up.includes(k));
+    };
 
-    const after=(label,stopLabels=[])=>{
+    // Search within a specific text section
+    const afterIn=(section, label, stopLabels=[])=>{
+      const lines=section.split(/\n/).map(l=>l.trim());
       const lbl=label.toLowerCase();
-      for(let i=0;i<linesAll.length;i++){
-        if(linesAll[i].toLowerCase().includes(lbl)){
-          for(let j=i+1;j<Math.min(i+4,linesAll.length);j++){
-            const v=linesAll[j].trim();
+      for(let i=0;i<lines.length;i++){
+        if(lines[i].toLowerCase().includes(lbl)){
+          for(let j=i+1;j<Math.min(i+5,lines.length);j++){
+            const v=lines[j].trim();
             if(!v) continue;
             if(/^\d{1,2}$/.test(v)) continue;
             if(isLabel(v)) return "";
-            if(stopLabels.some(s=>v.toLowerCase().includes(s.toLowerCase()))) return "";
+            if(stopLabels.some(s=>s&&v.toLowerCase().includes(s.toLowerCase()))) return "";
             return v;
           }
           return "";
@@ -1707,76 +1719,85 @@ function BulkImport({currentUser,agents,saveCustomer}){
       return "";
     };
 
+    // Shortcuts
+    const c=(lbl,stop=[])=>afterIn(contactSection,lbl,stop);
+    const b=(lbl,stop=[])=>afterIn(bankSection,lbl,stop);
+    const a=(lbl,stop=[])=>afterIn(rawText,lbl,stop);
+
     const normDate=v=>{
       if(!v)return"";
       const m=v.match(/(\d{1,2})[-\/\.](\d{1,2})[-\/\.](\d{2,4})/);
       if(m){const d=m[1].padStart(2,"0"),mo=m[2].padStart(2,"0"),y=m[3].length===2?"20"+m[3]:m[3];return`${y}-${mo}-${d}`;}
       return v;
     };
-    const cleanNum=v=>(v||"").replace(/\s+/g,"");
+    const cn=v=>(v||"").replace(/\s+/g,"");
+
     const emailM=rawText.match(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/);
     const pm=rawText.toLowerCase().includes("d/d")||rawText.toLowerCase().includes("direct debit")?"Direct Debit":"Cash / Cheque";
-    const SUPPLIERS=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
-    const findSupplier=hint=>{const area=hint?rawText.slice(Math.max(0,rawText.toLowerCase().indexOf(hint.toLowerCase()))):rawText;for(const s of SUPPLIERS){if(area.toLowerCase().includes(s.toLowerCase()))return s;}return"";};
+    const SUPPLIERS=["British Gas","EDF Energy","E.ON","EON Next","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
+    const findSupplier=txt=>{for(const s of SUPPLIERS){if(txt.toLowerCase().includes(s.toLowerCase()))return s;}return"";};
     const termM=rawText.match(/(\d+\s*[Yy]ear)/);
 
     return {
-      agentName:        after("AGENT NAME"),
-      date:             normDate(after("DATE",["BIRTH"])),
-      businessName:     after("BUSINESS NAME"),
-      contactPersonName:after("CONTACT PERSON NAME",["MOBILE","SUPPLY"]),
-      telephoneNo:      after("LAND LINE"),
-      mobileNo:         after("MOBILE NO.",["SUPPLY ADDRESS","SUPPLY"]),
-      landlineNo:       after("LAND LINE"),
-      email:            emailM?emailM[1]:"",
-      supplyAddress:    after("SUPPLY ADDRESS",["POSTCODE"]),
-      postcode:         after("POSTCODE"),
-      commercialRes:    after("COMMERCIAL/ RES")||after("COMMERCIAL",["TERM"])||"Commercial",
-      companyRegNo:     after("COMPANY REGISTRATION"),
-      elec1Supplier:    findSupplier("CURRENT SUPPLIER")||findSupplier("")||"",
-      elec1SupplyNo:    "",
-      elec1OfferRate:   "",
-      elec1SCharge:     after("S.CHARGE"),
-      elec1Day:         after("Day"),
-      elec1Night:       after("Night"),
-      elec1EveWend:     after("EVE"),
-      elec1ContractTerm:termM?termM[1]:after("CONTRACT  TERM")||after("CONTRACT TERM")||"",
-      elec1ContractEnd: normDate(after("Contract End Date")),
-      elec1ContractStart:normDate(after("Contract Start Date")),
-      elec1NameOnBill:  after("NAME APPEAR ON BILL"),
-      elec1AnnualConsumption: after("ANNUAL CONSUMPTION"),
-      elec1MeterSerial: after("METER SERIAL NO",["LATEST","BILL","£"]),
-      elec1MeterRead:   after("CURRENT METER READ",["METER SERIAL"]),
+      agentName:         c("AGENT NAME"),
+      date:              normDate(c("DATE",["BIRTH","OF BIRTH"])),
+      businessName:      c("BUSINESS NAME"),
+      contactPersonName: c("CONTACT PERSON NAME",["MOBILE","SUPPLY"]),
+      telephoneNo:       c("LAND LINE"),
+      mobileNo:          c("MOBILE NO.",["SUPPLY ADDRESS","SUPPLY"]),
+      landlineNo:        c("LAND LINE"),
+      email:             emailM?emailM[1]:"",
+      supplyAddress:     c("SUPPLY ADDRESS",["POSTCODE"]),
+      postcode:          c("POSTCODE"),
+      commercialRes:     c("COMMERCIAL/ RES")||c("COMMERCIAL",["TERM"])||"Commercial",
+      companyRegNo:      c("COMPANY REGISTRATION"),
+
+      elec1Supplier:     findSupplier(contactSection)||"",
+      elec1SupplyNo:     "",
+      elec1OfferRate:    "",
+      elec1SCharge:      c("S.CHARGE"),
+      elec1Day:          c("Day"),
+      elec1Night:        c("Night"),
+      elec1EveWend:      c("EVE"),
+      elec1ContractTerm: termM?termM[1]:c("CONTRACT  TERM")||c("CONTRACT TERM")||"",
+      elec1ContractEnd:  normDate(c("Contract End Date")),
+      elec1ContractStart:normDate(c("Contract Start Date")||c("Contract Start")||""),
+      elec1NameOnBill:   c("NAME APPEAR ON BILL"),
+      elec1AnnualConsumption: c("ANNUAL CONSUMPTION"),
+      elec1MeterSerial:  c("METER SERIAL NO",["LATEST","BILL","£"]),
+      elec1MeterRead:    c("CURRENT METER READ",["METER SERIAL"]),
       elec2Supplier:"",elec2SupplyNo:"",elec2OfferRate:"",elec2SCharge:"",
       elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",
       elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
-      gas1Supplier:     findSupplier("GAS")||"",
-      gas1MPRN:         after("MPRN"),
-      gas1UnitRate:     after("GAS UNIT RATE")||after("GAS RATE")||"",
-      gas1OfferedSCharge:after("GAS STANDING")||"",
-      gas1AQ:           after("AQ")||"",
-      gas1ContractEnd:  normDate(after("GAS CONTRACT END")||""),
-      gas1ContractStart:normDate(after("GAS CONTRACT START")||""),
-      gas1ContractTerm: after("GAS CONTRACT TERM")||after("GAS TERM")||"",
-      gas1SiteNoBG:     after("SITE NO(if B.G)"),
-      gas1NameOnBill:   "",gas1MeterRead:"",gas1MeterSerial:"",
+
+      gas1Supplier:      findSupplier(rawText.toLowerCase().includes("gas supplier")?rawText.slice(rawText.toLowerCase().indexOf("gas supplier")):"")||"",
+      gas1MPRN:          a("MPRN"),
+      gas1UnitRate:      a("GAS UNIT RATE")||a("GAS RATE")||"",
+      gas1OfferedSCharge:a("GAS STANDING")||"",
+      gas1AQ:            a("AQ")||"",
+      gas1ContractEnd:   normDate(a("GAS CONTRACT END")||""),
+      gas1ContractStart: normDate(a("GAS CONTRACT START")||""),
+      gas1ContractTerm:  a("GAS CONTRACT TERM")||a("GAS TERM")||"",
+      gas1SiteNoBG:      c("SITE NO(if B.G)")||c("SITE NO")||"",
+      gas1NameOnBill:"",gas1MeterRead:"",gas1MeterSerial:"",
       gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",
       gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",
       gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
-      bankName:         after("BANK NAME:"),
-      accountTitle:     after("ACCOUNT TITLE:"),
-      branchAddress:    after("BRANCH ADDRESS:"),
-      sortCode:         cleanNum(after("SORT CODE")),
-      accountNo:        cleanNum(after("ACCOUNT  NO")||after("ACCOUNT NO")||""),
-      billPaymentMethod:pm,
-      landlordName:     after("LANDLORD NAME:"),
-      directorsHomeAddress:after("DIRECTORS HOME ADDRESS:"),
-      directorsDOB:     normDate(after("DIRECTOR'S DATE OF BIRTH:")||after("DATE OF BIRTH")||""),
-      nameOfNewCustomer:after("NAME OF NEW CUSTOMER:"),
-      remarks:          after("REMARKS:"),
-      checkedByManager: after("CHECKED  BY:"),
-      checkedByEditor:  "",
-      renewalStatus:    "Not Due",
+
+      bankName:          b("BANK NAME"),
+      accountTitle:      b("ACCOUNT TITLE"),
+      branchAddress:     b("BRANCH ADDRESS"),
+      sortCode:          cn(b("SORT CODE")),
+      accountNo:         cn(b("ACCOUNT  NO")||b("ACCOUNT NO")||""),
+      billPaymentMethod: pm,
+      landlordName:      b("LANDLORD NAME"),
+      directorsHomeAddress: b("DIRECTORS HOME ADDRESS")||b("HOME ADDRESS")||"",
+      directorsDOB:      normDate(b("DIRECTOR'S DATE OF BIRTH")||b("DATE OF BIRTH")||""),
+      nameOfNewCustomer: b("NAME OF NEW CUSTOMER"),
+      remarks:           a("REMARKS:"),
+      checkedByManager:  a("CHECKED  BY:")||a("CHECKED BY:")||"",
+      checkedByEditor:   "",
+      renewalStatus:     "Not Due",
     };
   };
 

@@ -1358,61 +1358,11 @@ Rules: dates → YYYY-MM-DD format. Rates/prices → numbers only (no units). Re
     if(!rawText.trim()){setError("Please paste some data first.");return;}
     setLoading(true);setError("");setResult(null);
     try{
-      const t=rawText;
-      const g=(patterns)=>{for(const p of patterns){const m=t.match(p);if(m&&m[1]&&m[1].trim())return m[1].trim();}return "";};
-      const gDate=(patterns)=>{const raw=g(patterns);if(!raw)return "";const m=raw.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);if(m){const day=m[1].padStart(2,"0");const mon=m[2].padStart(2,"0");const yr=m[3].length===2?"20"+m[3]:m[3];return `${yr}-${mon}-${day}`;}return raw;};
-      const gNum=(patterns)=>{const raw=g(patterns);return raw.replace(/[^\d.]/g,"");};
-      const suppliers=["British Gas","EDF Energy","E.ON","npower","Scottish Power","SSE","Octopus Energy","Shell Energy","Ovo Energy","Corona Energy","Total Gas & Power","Haven Power"];
-      const gSupplier=(hint)=>{const area=hint?t.slice(t.toLowerCase().indexOf(hint.toLowerCase())):t;for(const s of suppliers){if(area.toLowerCase().includes(s.toLowerCase()))return s;}return "";};
-      setResult({
-        businessName:g([/business[\s\w]*?:\s*(.+)/i,/company[\s\w]*?:\s*(.+)/i]),
-        contactPersonName:g([/contact[\s\w]*?:\s*(.+)/i,/name[\s\w]*?:\s*(.+)/i]),
-        telephoneNo:g([/tel(?:ephone)?[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
-        mobileNo:g([/mob(?:ile)?[\s\w]*?:\s*(07[\d\s]{9,})/i,/(07\d{3}[\s\-]?\d{6})/]),
-        landlineNo:g([/landline[\s\w]*?:\s*([\d\s\+\-\(\)]{10,})/i]),
-        supplyAddress:g([/address[\s\w]*?:\s*(.+)/i,/supply address[\s\w]*?:\s*(.+)/i]),
-        postcode:g([/postcode[\s\w]*?:\s*([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})/i,/([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})\b/i]),
-        commercialRes:t.toLowerCase().includes("resident")?"Residential":"Commercial",
-        companyRegNo:g([/reg(?:istration)?[\s\w]*?(?:no|number)?[\s:]*([A-Z0-9]{6,10})/i]),
-        elec1Supplier:gSupplier("mpan")||gSupplier("electric")||"",
-        elec1SupplyNo:g([/mpan[\s\w]*?:\s*([\d\s]{10,})/i]),
-        elec1OfferRate:gNum([/elec[\w\s]*?rate[\s:]*(\d+\.?\d*)/i,/unit\s*rate[\s:]*(\d+\.?\d*)/i]),
-        elec1SCharge:gNum([/standing[\w\s]*?charge[\s:]*(\d+\.?\d*)/i]),
-        elec1Day:gNum([/day[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-        elec1Night:gNum([/night[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-        elec1EveWend:gNum([/eve[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-        elec1ContractTerm:g([/contract\s*term[\s:]*(\d+\s*year)/i]),
-        elec1NameOnBill:g([/name\s*on\s*(?:elec)?\s*bill[\s:]*(.+)/i]),
-        elec1ContractEnd:gDate([/contract\s*end[\s\w]*?:\s*([\d\/\-\.]+)/i,/end\s*date[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-        elec1MeterSerial:g([/meter[\w\s]*?serial[\s:]*([A-Z0-9]+)/i,/msn[\s:]*([A-Z0-9]+)/i]),
-        elec1AnnualConsumption:gNum([/annual[\w\s]*?(?:elec|consumption)[\s:]*(\d+)/i]),
-        elec2Supplier:"",elec2SupplyNo:"",elec2OfferRate:"",elec2SCharge:"",elec2Day:"",elec2Night:"",elec2EveWend:"",elec2ContractTerm:"",elec2NameOnBill:"",elec2ContractEnd:"",elec2MeterSerial:"",elec2AnnualConsumption:"",
-        gas1Supplier:gSupplier("mprn")||gSupplier("gas")||"",
-        gas1MPRN:g([/mprn[\s\w]*?:\s*([\d\s]{10,})/i]),
-        gas1UnitRate:gNum([/gas[\w\s]*?rate[\s:]*(\d+\.?\d*)/i]),
-        gas1OfferedSCharge:gNum([/gas[\w\s]*?standing[\s:]*(\d+\.?\d*)/i]),
-        gas1AQ:gNum([/(?:aq|annual\s*quantity)[\s:]*(\d+)/i]),
-        gas1ContractEnd:gDate([/gas[\w\s]*?end[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-        gas1ContractStart:gDate([/gas[\w\s]*?start[\s\w]*?:\s*([\d\/\-\.]+)/i]),
-        gas1ContractTerm:g([/gas[\w\s]*?term[\s:]*(\d+\s*year)/i]),
-        gas1SiteNoBG:g([/site\s*no[\s:]*([A-Z0-9]+)/i]),
-        gas1NameOnBill:g([/name\s*on\s*gas\s*bill[\s:]*(.+)/i]),
-        gas1MeterRead:gNum([/meter\s*read(?:ing)?[\s:]*(\d+)/i]),
-        gas1MeterSerial:g([/gas[\w\s]*?serial[\s:]*([A-Z0-9]+)/i]),
-        gas2Supplier:"",gas2OfferedSCharge:"",gas2UnitRate:"",gas2AQ:"",gas2MPRN:"",gas2ContractEnd:"",gas2ContractStart:"",gas2ContractTerm:"",gas2SiteNoBG:"",gas2NameOnBill:"",gas2MeterRead:"",gas2MeterSerial:"",
-        bankName:g([/bank[\s\w]*?(?:name)?[\s:]+([A-Za-z\s]+?)(?:\n|sort|$)/i]),
-        accountTitle:g([/account[\s\w]*?(?:title|name)[\s:]*(.+)/i]),
-        branchAddress:g([/branch[\s\w]*?address[\s:]*(.+)/i]),
-        sortCode:g([/sort[\s\w]*?code[\s:]*(\d{2}[\s\-]\d{2}[\s\-]\d{2})/i,/(\d{2}[\-]\d{2}[\-]\d{2})/]),
-        accountNo:g([/account[\s\w]*?(?:no|number)[\s:]*(\d{6,10})/i]),
-        billPaymentMethod:t.toLowerCase().includes("prepay")?"Cash / Cheque":"Direct Debit",
-        landlordName:g([/landlord[\s\w]*?(?:name)?[\s:]*(.+)/i]),
-        directorsHomeAddress:g([/director[\s\w]*?address[\s:]*(.+)/i]),
-        directorsDOB:gDate([/(?:dob|date\s*of\s*birth)[\s:]*?([\d\/\-\.]+)/i]),
-        nameOfNewCustomer:g([/new\s*customer[\s:]*(.+)/i]),
-        remarks:g([/remarks?[\s:]*(.+)/i,/notes?[\s:]*(.+)/i]),
-      });
-    }catch(e){setError("Could not extract data. Please check the text and try again.");}
+      const extracted=extractFromText(rawText);
+      setResult(extracted);
+    }catch(e){
+      setError("Could not extract data. Please check the text and try again.");
+    }
     setLoading(false);
   };
 
